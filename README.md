@@ -38,6 +38,16 @@ bun run cancel -- --account aof --code A0KK429
 zsh scripts/setup-macmini.sh   # ลง bun, deps, pmset no-sleep, สร้าง+load launchd, smoke test
 ```
 
+Ubuntu Server (Thai IP) ใช้ Docker Compose สำหรับ runtime และ `systemd` timers สำหรับ schedule:
+
+```sh
+cp .env.example .env           # ใส่ credentials/secrets ก่อน
+sh scripts/setup-ubuntu.sh     # build image, install+enable timers, status smoke test
+```
+
+ต้องติดตั้ง Docker Engine + Compose v2 plugin ไว้ก่อน ดูคำสั่ง operate/update/backup ที่
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#ubuntu-server-docker-compose--systemd)
+
 **Window:** slot เปิด 07:00 ICT สำหรับวัน **+6** → `buildPlan` default `advanceDays=6`. bot exit เองถ้าวันเป้าหมาย (today+6) ไม่อยู่ใน config. จองวันเล่นต้อง run ก่อน 6 วัน → คอร์ท **เสาร์ = run วันอาทิตย์**, คอร์ท **อาทิตย์ = run วันจันทร์** (จึงตั้ง launchd Sun + Mon).
 
 runbook เต็ม (geo-block, healthchecks, troubleshooting, recovery) → [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)

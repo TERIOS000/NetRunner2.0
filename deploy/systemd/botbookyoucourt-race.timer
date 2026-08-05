@@ -1,0 +1,12 @@
+[Unit]
+Description=Run BookYourCourt race job Sunday and Monday at 06:55 ICT
+
+[Timer]
+OnCalendar=Sun,Mon *-*-* 06:55:00 Asia/Bangkok
+Persistent=true
+AccuracySec=1s
+Unit=botbookyoucourt-race.service
+
+[Install]
+WantedBy=timers.target
+

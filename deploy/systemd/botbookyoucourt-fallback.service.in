@@ -1,0 +1,11 @@
+[Unit]
+Description=BookYourCourt fallback booking job
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@REPO@
+ExecStart=@FLOCK@ --nonblock /run/lock/botbookyoucourt.lock @DOCKER@ compose run --rm fallback
+TimeoutStartSec=5min

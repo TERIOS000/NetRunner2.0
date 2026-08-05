@@ -1,0 +1,35 @@
+name: botbookyoucourt
+
+x-bot-service: &bot-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: botbookyoucourt:local
+  init: true
+  restart: "no"
+  env_file:
+    - .env
+  environment:
+    TZ: Asia/Bangkok
+  volumes:
+    - ./config.json:/app/config.json:ro
+    - ./logs:/app/logs
+    - ./state:/app/state
+
+services:
+  race:
+    <<: *bot-service
+    command: ["run"]
+
+  fallback:
+    <<: *bot-service
+    command: ["run", "--now"]
+
+  dry-run:
+    <<: *bot-service
+    command: ["dry-run"]
+
+  status:
+    <<: *bot-service
+    command: ["status"]
+

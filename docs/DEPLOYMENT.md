@@ -117,6 +117,99 @@ marker: ลบ `state/booked-<date>.json` ถ้าต้องการบั�
 | `self signed certificate in certificate chain` ทุก request (TU + Telegram พร้อมกัน) | เครื่องมี corporate MITM proxy (เช่น Netskope/Zscaler) — bun ไม่ trust CA ของ proxy | อย่ารัน bot บนเครื่องทำงาน; ถ้าจำเป็นชั่วคราว: export CA ของ proxy เป็น .pem แล้วตั้ง `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` ใน plist/run.sh |
 | `CreateOrEdit: Internal server error` ทั้งที่ auth ผ่าน | user TU ของ account นั้นหมดอายุ (ไม่มีสิทธิ์จอง) | ต่ออายุ user กับ TU; ระหว่างรอ เอา account ออกจาก `config.json` กัน bot ยิง 500 ฟรี |
 | log `no attempt made` | run เริ่มหลัง `deadline` 07:02 (เครื่องหลับแล้ว launchd ยิงตอนตื่น) | เช็ค pmset (แถวล่าง) + ต้องมี fallback agent 07:10 (`launchctl list \| grep botbook` ต้องเห็น 2 ตัว) |
+
+## Ubuntu Server: Docker Compose + systemd
+
+Ubuntu deployment keeps Bun and application dependencies inside the image. Two host `systemd` timers launch short-lived Compose jobs. The existing Mac/launchd deployment remains supported.
+
+### Requirements
+
+- Ubuntu with `systemd`, Docker Engine, and the Docker Compose v2 plugin (`docker compose`).
+- A stable checkout path and a Thai public IP/network route accepted by the TU API.
+- `.env` populated from `.env.example`. Keep it untracked and readable only by its owner.
+
+The installer validates these requirements but does not install or replace Docker.
+
+### Install
+
+```sh
+git clone https://github.com/onepiecepuracr-satod07/botbookyoucourt.git
+cd botbookyoucourt
+cp .env.example .env
+nano .env
+sh scripts/setup-ubuntu.sh
+```
+
+The script builds `botbookyoucourt:local`, creates `logs/` and `state/`, installs both services and timers under `/etc/systemd/system`, enables them, and runs a safe `status` smoke test. The smoke test authenticates and reads availability but never creates a booking.
+
+The timers use explicit `Asia/Bangkok` calendar expressions:
+
+| Timer | Schedule | Compose job |
+|---|---|---|
+| `botbookyoucourt-race.timer` | Sun, Mon 06:55 ICT | `race` (`run`) |
+| `botbookyoucourt-fallback.timer` | Sun, Mon 07:10 ICT | `fallback` (`run --now`) |
+
+Both timers are persistent. A shared `flock` lock prevents race and fallback jobs from overlapping.
+
+### Inspect and test
+
+```sh
+sudo systemctl list-timers 'botbookyoucourt-*'
+sudo systemctl status botbookyoucourt-race.timer botbookyoucourt-fallback.timer
+sudo journalctl -u botbookyoucourt-race.service -u botbookyoucourt-fallback.service
+tail -f logs/$(date +%F).log
+
+# Safe: authentication + availability only
+docker compose run --rm status
+docker compose run --rm dry-run
+
+# Live booking paths
+sudo systemctl start botbookyoucourt-race.service
+sudo systemctl start botbookyoucourt-fallback.service
+```
+
+The final two commands can create real bookings when the target day is configured. Use `systemctl status <service>` and the journal to inspect the last exit status. A non-zero bot exit is propagated through Docker to systemd and to the healthchecks.io failure URL.
+
+### Update
+
+```sh
+git pull
+sh scripts/setup-ubuntu.sh
+```
+
+Running setup again is idempotent: it rebuilds the image, refreshes units with the current absolute checkout path, reloads systemd, and leaves both timers enabled.
+
+### Disable or remove scheduling
+
+```sh
+sudo systemctl disable --now botbookyoucourt-race.timer botbookyoucourt-fallback.timer
+```
+
+This stops future scheduled runs without deleting the image, configuration, logs, or booking markers. Re-run the setup script to enable the timers again.
+
+### Persistence and backup
+
+`config.json` is mounted read-only. `logs/` and `state/` are host bind mounts, so rebuilding/removing containers does not erase them. Back up the idempotency markers before moving hosts:
+
+```sh
+tar -czf botbookyoucourt-state-$(date +%F).tar.gz state/
+```
+
+Restore `state/` into the new checkout before enabling its timers. Never run timers on the old and new hosts simultaneously. Keep `.env` in a separate secure backup; it is intentionally excluded from the Docker build context and Git.
+
+### Troubleshooting
+
+```sh
+docker compose config
+docker compose build --no-cache
+docker compose run --rm status
+sudo systemctl reset-failed botbookyoucourt-race.service botbookyoucourt-fallback.service
+```
+
+- `status` timeouts usually mean the host does not have an accepted Thai route or the network is unavailable.
+- Docker permission failures during manual Compose commands mean the current user needs access to Docker; the installed system services run as root.
+- `flock: failed to execute` means Docker moved or was removed; install Docker Engine using its official Ubuntu packages and rerun setup to refresh its resolved path.
+- If the checkout moves, rerun `sh scripts/setup-ubuntu.sh` so `WorkingDirectory` is regenerated.
 | จองไม่ได้แต่ไม่มี error ชัด | slot ถูกคนอื่นแย่ง (race แพ้) | fallback 07:10 เก็บตก; ถ้ายัง = จองมือ |
 | เครื่องหลับตอน 06:55 | pmset ไม่ได้ตั้ง / เครื่องรีบูตแล้วไม่ auto-login | `pmset -g \| grep sleep` ต้อง 0; เปิด auto-login |
 | agent ไม่ทำงานหลังรีบูต | ไม่ได้ auto-login | เปิด auto-login |
