@@ -1,9 +1,38 @@
+# Git
 .git
+.gitignore
+.gitattributes
+
+# Environment secrets (mounted at runtime via compose)
 .env
-node_modules
-dist
-logs
-state
+.env.*
+
+# Dependencies (installed inside image)
+node_modules/
+
+# Build output (compiled inside image)
+dist/
+
+# Runtime state (bind-mounted at runtime)
+logs/
+state/
+
+# HAR captures (reference only, large files)
 *.har
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS junk
 .DS_Store
+Thumbs.db
+
+# Docs (not needed at runtime)
+docs/
+
+# CI/CD
+.github/
 

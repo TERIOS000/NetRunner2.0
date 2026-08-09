@@ -32,13 +32,7 @@ bun run cancel -- --account aof --code A0KK429
 
 ## Deployment
 
-รันจริงบน Mac mini บ้าน (Thai IP) ด้วย launchd 2 agents — race (Sun,Mon 06:55) + fallback (Sun,Mon 07:10). setup ครั้งเดียว:
-
-```sh
-zsh scripts/setup-macmini.sh   # ลง bun, deps, pmset no-sleep, สร้าง+load launchd, smoke test
-```
-
-Ubuntu Server (Thai IP) ใช้ Docker Compose สำหรับ runtime และ `systemd` timers สำหรับ schedule:
+**Production:** Ubuntu Server (Thai IP) with Docker Compose + `systemd` timers:
 
 ```sh
 cp .env.example .env           # ใส่ credentials/secrets ก่อน
@@ -46,9 +40,18 @@ sh scripts/setup-ubuntu.sh     # build image, install+enable timers, status smok
 ```
 
 ต้องติดตั้ง Docker Engine + Compose v2 plugin ไว้ก่อน ดูคำสั่ง operate/update/backup ที่
-[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#ubuntu-server-docker-compose--systemd)
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#2-ubuntu-server-docker-compose--systemd-primary)
 
-**Window:** slot เปิด 07:00 ICT สำหรับวัน **+6** → `buildPlan` default `advanceDays=6`. bot exit เองถ้าวันเป้าหมาย (today+6) ไม่อยู่ใน config. จองวันเล่นต้อง run ก่อน 6 วัน → คอร์ท **เสาร์ = run วันอาทิตย์**, คอร์ท **อาทิตย์ = run วันจันทร์** (จึงตั้ง launchd Sun + Mon).
+**Legacy:** Mac mini (Thai IP) with launchd 2 agents — race (Sun,Mon 06:55) + fallback (Sun,Mon 07:10):
+
+```sh
+zsh scripts/setup-macmini.sh   # ลง bun, deps, pmset no-sleep, สร้าง+load launchd, smoke test
+```
+
+
+**Windows (dev/test):** ใช้ Node รันแทน Bun (Bun มี TLS bug บน Windows). ดู [docs/DEPLOYMENT.md §5](docs/DEPLOYMENT.md#5-windows-พัฒนาทดสอบ)
+
+**Window:** slot เปิด 07:00 ICT สำหรับวัน **+6** → `buildPlan` default `advanceDays=6`. bot exit เองถ้าวันเป้าหมาย (today+6) ไม่อยู่ใน config. จองวันเล่นต้อง run ก่อน 6 วัน → คอร์ท **เสาร์ = run วันอาทิตย์**, คอร์ท **อาทิตย์ = run วันจันทร์** (จึงตั้ง scheduler Sun + Mon).
 
 runbook เต็ม (geo-block, healthchecks, troubleshooting, recovery) → [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
@@ -95,13 +98,13 @@ Flow การจอง:
 
 ```mermaid
 sequenceDiagram
-  participant L as launchd (Sun+Mon 06:55)
+  participant S as systemd timer (Sun+Mon 06:55)
   participant C as cli/main
   participant P as planner (core)
   participant S as BookingStore (adapter)
   participant E as executor (app)
   participant G as BookingGateway (adapter)
-  L->>C: run
+  S->>C: run
   C->>P: buildPlan(config, วันนี้+6)
   P-->>C: BookingTask[]
   C->>S: load(targetDate) → marks

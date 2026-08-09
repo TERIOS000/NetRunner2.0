@@ -16,7 +16,10 @@
     "run:now": "bun src/index.ts run --now",
     "dry-run": "bun src/index.ts dry-run",
     "status": "bun src/index.ts status",
-    "cancel": "bun src/index.ts cancel"
+    "cancel": "bun src/index.ts cancel",
+    "docker:build": "docker compose build",
+    "docker:status": "docker compose run --rm status",
+    "docker:dry-run": "docker compose run --rm dry-run"
   },
   "dependencies": {
     "zod": "^4.4.3"

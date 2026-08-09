@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Bot that auto-books TU tennis courts (bookyourcourt.psm.tu.ac.th) via pure HTTP (no browser). Runs on a Mac mini in Thailand via launchd — the TU API geo-blocks non-Thai IPs, so live API calls only work from a Thai IP.
+Bot that auto-books TU tennis courts (bookyourcourt.psm.tu.ac.th) via pure HTTP (no browser). Primary deployment: Ubuntu Server with Docker + systemd timers (also works on Mac mini via launchd — legacy). The TU API geo-blocks non-Thai IPs, so live API calls only work from a Thai IP.
 
 ## Commands
 
@@ -51,14 +51,16 @@ Tests colocate as `*.test.ts` next to source. Focus on `core/` (pure, determinis
 
 ## Domain rules (drive most logic)
 
-- Booking opens **6 days ahead**: slots for day D open at 07:00 ICT on D−6. `buildPlan` defaults `advanceDays=6`; the bot exits if today+6 isn't in `config.json`'s schedule. Hence launchd runs Sun+Mon (books Sat+Sun courts).
+- Booking opens **6 days ahead**: slots for day D open at 07:00 ICT on D−6. `buildPlan` defaults `advanceDays=6`; the bot exits if today+6 isn't in `config.json`'s schedule. Hence the scheduler runs Sun+Mon (books Sat+Sun courts).
 - 1 account = 1 hour/day max → a 2-hour block requires 2 accounts (`config.json` accounts + `TU_A_`/`TU_B_` env prefixes).
 - Court number → API court id: 01→39, 02→40, 03→41, 04→51, 05→52 (map in `core/types.ts`).
 - Race timing (`config.json` → `race`): fire slightly before 07:00 (`fireAt: 06:59:58`), retry until `deadline`.
 
 ## Deployment / ops
 
-Production = launchd on Mac mini: `com.botbookyoucourt.race` (Sun,Mon 06:55) + `com.botbookyoucourt.fallback` (Sun,Mon 07:10). Bootstrap with `zsh scripts/setup-macmini.sh`. Verify with `zsh scripts/test-schedule.sh` (safe dry-run) or `--live` (kickstarts fallback agent). `scripts/run.sh` pings healthchecks.io (dead-man switch). Full runbook: `docs/DEPLOYMENT.md`.
+Production = Ubuntu Server with Docker + systemd timers: `botbookyoucourt-race.timer` (Sun,Mon 06:55 ICT) + `botbookyoucourt-fallback.timer` (Sun,Mon 07:10 ICT). Bootstrap with `sh scripts/setup-ubuntu.sh` (requires Docker Engine + Compose v2 pre-installed). Verify with `docker compose run --rm dry-run` (safe) or `sudo systemctl start botbookyoucourt-race.service` (real). `scripts/docker-run.sh` pings healthchecks.io (dead-man switch).
+
+Legacy: also runs on Mac mini via launchd — bootstrap with `zsh scripts/setup-macmini.sh`. Full runbook: `docs/DEPLOYMENT.md`.
 
 ## Notes
 
