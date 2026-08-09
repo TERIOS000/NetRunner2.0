@@ -156,7 +156,26 @@ docker compose run --rm status
 docker compose run --rm fallback
 ```
 
-### อัปเดต
+### การแก้ไข config และโค้ดขณะรัน
+
+| แก้ไฟล์ | ต้อง rebuild/restart? | หมายเหตุ |
+|---|---|---|
+| `config.json` | ❌ ไม่ต้อง | bind mount `:ro` — container เห็นทันที, scheduler อ่านใหม่ทุกครั้งที่ fire |
+| `.env` | ⚠️ restart | `env_file` อ่านเฉพาะตอน container start |
+| `src/` (โค้ด) | ✅ rebuild + restart | โค้ดถูก COPY ใน Dockerfile, ไม่ได้ mount |
+| `scripts/` | ✅ rebuild + restart | เหมือนข้างบน |
+| `Dockerfile` / `compose.yaml` | ✅ rebuild + restart | — |
+
+```sh
+# .env เปลี่ยน → restart พอ
+docker compose up -d scheduler
+
+# โค้ด/scripts เปลี่ยน → rebuild + restart
+docker compose build scheduler
+docker compose up -d scheduler
+```
+
+### อัปเดตโค้ดจาก Git
 
 ```sh
 git pull
