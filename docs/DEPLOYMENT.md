@@ -42,8 +42,8 @@ TU API `bookyourcourtapi.psm.tu.ac.th` (49.229.83.38) **บล็อก IP ต�
 ```sh
 # 1. clone (repo private — login GitHub / PAT)
 xcode-select --install 2>/dev/null   # ถ้ายังไม่มี git
-git clone https://github.com/onepiecepuracr-satod07/botbookyoucourt.git
-cd botbookyoucourt
+git clone https://github.com/TERIOS000/NetRunner2.0.git
+cd NetRunner2.0
 
 # 2. วาง .env (AirDrop จากเครื่องเดิม หรือ cp .env.example .env แล้วกรอก)
 #    ต้องมี: TU_A_USERNAME/PASSWORD, TU_B_USERNAME/PASSWORD,
@@ -117,41 +117,44 @@ marker: ลบ `state/booked-<date>.json` ถ้าต้องการบั�
 | `self signed certificate in certificate chain` ทุก request (TU + Telegram พร้อมกัน) | เครื่องมี corporate MITM proxy (เช่น Netskope/Zscaler) — bun ไม่ trust CA ของ proxy | อย่ารัน bot บนเครื่องทำงาน; ถ้าจำเป็นชั่วคราว: export CA ของ proxy เป็น .pem แล้วตั้ง `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` ใน plist/run.sh |
 | `CreateOrEdit: Internal server error` ทั้งที่ auth ผ่าน | user TU ของ account นั้นหมดอายุ (ไม่มีสิทธิ์จอง) | ต่ออายุ user กับ TU; ระหว่างรอ เอา account ออกจาก `config.json` กัน bot ยิง 500 ฟรี |
 | log `no attempt made` | run เริ่มหลัง `deadline` 07:02 (เครื่องหลับแล้ว launchd ยิงตอนตื่น) | เช็ค pmset (แถวล่าง) + ต้องมี fallback agent 07:10 (`launchctl list \| grep botbook` ต้องเห็น 2 ตัว) |
+| จองไม่ได้แต่ไม่มี error ชัด | slot ถูกคนอื่นแย่ง (race แพ้) | fallback 07:10 เก็บตก; ถ้ายัง = จองมือ |
+| เครื่องหลับตอน 06:55 | pmset ไม่ได้ตั้ง / เครื่องรีบูตแล้วไม่ auto-login | `pmset -g \| grep sleep` ต้อง 0; เปิด auto-login |
+| agent ไม่ทำงานหลังรีบูต | ไม่ได้ auto-login | เปิด auto-login |
 
 ## Ubuntu Server: Docker Compose + systemd
 
-Ubuntu deployment keeps Bun and application dependencies inside the image. Two host `systemd` timers launch short-lived Compose jobs. The existing Mac/launchd deployment remains supported.
+การ deploy บน Ubuntu จะเก็บ Bun และ dependencies ของแอปไว้ใน image โดยให้ `systemd` timers บน host เรียก Compose jobs แบบรันจบแล้วออก 2 ตัว ส่วน deployment เดิมบน Mac/launchd ยังใช้ได้เหมือนเดิม.
 
-### Requirements
+### สิ่งที่ต้องมี
 
-- Ubuntu with `systemd`, Docker Engine, and the Docker Compose v2 plugin (`docker compose`).
-- A stable checkout path and a Thai public IP/network route accepted by the TU API.
-- `.env` populated from `.env.example`. Keep it untracked and readable only by its owner.
+- Ubuntu ที่ใช้ `systemd`, ติดตั้ง Docker Engine และ Docker Compose v2 plugin (`docker compose`) แล้ว.
+- clone repo ไว้ที่ path ถาวร และ server ต้องมี public IP ไทยหรือ route ที่ TU API ยอมรับ.
+- สร้าง `.env` จาก `.env.example` และกรอกค่าครบ. ห้าม commit ไฟล์นี้ และควรให้เฉพาะเจ้าของไฟล์อ่านได้.
 
-The installer validates these requirements but does not install or replace Docker.
+setup script จะตรวจสิ่งเหล่านี้ แต่จะไม่ติดตั้งหรือเปลี่ยน Docker ที่มีอยู่ให้เอง.
 
-### Install
+### ติดตั้ง
 
 ```sh
-git clone https://github.com/onepiecepuracr-satod07/botbookyoucourt.git
-cd botbookyoucourt
+git clone https://github.com/TERIOS000/NetRunner2.0.git
+cd NetRunner2.0
 cp .env.example .env
 nano .env
 sh scripts/setup-ubuntu.sh
 ```
 
-The script builds `botbookyoucourt:local`, creates `logs/` and `state/`, installs both services and timers under `/etc/systemd/system`, enables them, and runs a safe `status` smoke test. The smoke test authenticates and reads availability but never creates a booking.
+script จะ build image `botbookyoucourt:local`, สร้าง `logs/` และ `state/`, ติดตั้ง services/timers ทั้ง 2 ชุดไว้ใน `/etc/systemd/system`, enable timers และรัน `status` smoke test. smoke test จะ login และอ่านตารางว่างเท่านั้น ไม่จองจริง.
 
-The timers use explicit `Asia/Bangkok` calendar expressions:
+timers ระบุ timezone `Asia/Bangkok` โดยตรง:
 
-| Timer | Schedule | Compose job |
+| Timer | เวลา | Compose job |
 |---|---|---|
 | `botbookyoucourt-race.timer` | Sun, Mon 06:55 ICT | `race` (`run`) |
 | `botbookyoucourt-fallback.timer` | Sun, Mon 07:10 ICT | `fallback` (`run --now`) |
 
-Both timers are persistent. A shared `flock` lock prevents race and fallback jobs from overlapping.
+timers ทั้งคู่ตั้ง `Persistent=true` เพื่อไม่ให้พลาดรอบหลัง reboot และใช้ `flock` ตัวเดียวกันเพื่อป้องกัน race กับ fallback รันซ้อนกัน.
 
-### Inspect and test
+### ตรวจสอบและทดสอบ
 
 ```sh
 sudo systemctl list-timers 'botbookyoucourt-*'
@@ -159,45 +162,45 @@ sudo systemctl status botbookyoucourt-race.timer botbookyoucourt-fallback.timer
 sudo journalctl -u botbookyoucourt-race.service -u botbookyoucourt-fallback.service
 tail -f logs/$(date +%F).log
 
-# Safe: authentication + availability only
+# ปลอดภัย: login + ดูตารางว่างเท่านั้น
 docker compose run --rm status
 docker compose run --rm dry-run
 
-# Live booking paths
+# ของจริง: อาจจองสนาม
 sudo systemctl start botbookyoucourt-race.service
 sudo systemctl start botbookyoucourt-fallback.service
 ```
 
-The final two commands can create real bookings when the target day is configured. Use `systemctl status <service>` and the journal to inspect the last exit status. A non-zero bot exit is propagated through Docker to systemd and to the healthchecks.io failure URL.
+2 คำสั่งสุดท้ายอาจจองสนามจริงถ้าวันเป้าหมายอยู่ใน config. ดู exit status ล่าสุดด้วย `systemctl status <service>` และ journal. ถ้า bot จบด้วย exit code ที่ไม่ใช่ 0 สถานะจะถูกส่งต่อผ่าน Docker ไปยัง systemd และ failure URL ของ healthchecks.io.
 
-### Update
+### อัปเดต
 
 ```sh
 git pull
 sh scripts/setup-ubuntu.sh
 ```
 
-Running setup again is idempotent: it rebuilds the image, refreshes units with the current absolute checkout path, reloads systemd, and leaves both timers enabled.
+รัน setup ซ้ำได้อย่างปลอดภัย: script จะ rebuild image, อัปเดต units ด้วย absolute path ปัจจุบัน, reload systemd และคง timers ทั้งคู่ไว้ในสถานะ enabled.
 
-### Disable or remove scheduling
+### ปิด schedule ชั่วคราว
 
 ```sh
 sudo systemctl disable --now botbookyoucourt-race.timer botbookyoucourt-fallback.timer
 ```
 
-This stops future scheduled runs without deleting the image, configuration, logs, or booking markers. Re-run the setup script to enable the timers again.
+คำสั่งนี้หยุดรอบถัดไปโดยไม่ลบ image, config, logs หรือ booking markers. รัน setup script ซ้ำเพื่อเปิด timers อีกครั้ง.
 
-### Persistence and backup
+### ข้อมูลถาวรและ backup
 
-`config.json` is mounted read-only. `logs/` and `state/` are host bind mounts, so rebuilding/removing containers does not erase them. Back up the idempotency markers before moving hosts:
+`config.json` mount แบบ read-only ส่วน `logs/` และ `state/` เป็น bind mounts จาก host ดังนั้น rebuild หรือลบ container แล้วข้อมูลยังอยู่. backup idempotency markers ก่อนย้ายเครื่อง:
 
 ```sh
 tar -czf botbookyoucourt-state-$(date +%F).tar.gz state/
 ```
 
-Restore `state/` into the new checkout before enabling its timers. Never run timers on the old and new hosts simultaneously. Keep `.env` in a separate secure backup; it is intentionally excluded from the Docker build context and Git.
+restore `state/` เข้า checkout ใหม่ก่อน enable timers และห้ามเปิด timers บนเครื่องเก่ากับเครื่องใหม่พร้อมกัน. เก็บ `.env` แยกไว้ใน backup ที่ปลอดภัย เพราะไฟล์นี้ถูกตัดออกจาก Docker build context และ Git โดยตั้งใจ.
 
-### Troubleshooting
+### แก้ปัญหา
 
 ```sh
 docker compose config
@@ -206,13 +209,10 @@ docker compose run --rm status
 sudo systemctl reset-failed botbookyoucourt-race.service botbookyoucourt-fallback.service
 ```
 
-- `status` timeouts usually mean the host does not have an accepted Thai route or the network is unavailable.
-- Docker permission failures during manual Compose commands mean the current user needs access to Docker; the installed system services run as root.
-- `flock: failed to execute` means Docker moved or was removed; install Docker Engine using its official Ubuntu packages and rerun setup to refresh its resolved path.
-- If the checkout moves, rerun `sh scripts/setup-ubuntu.sh` so `WorkingDirectory` is regenerated.
-| จองไม่ได้แต่ไม่มี error ชัด | slot ถูกคนอื่นแย่ง (race แพ้) | fallback 07:10 เก็บตก; ถ้ายัง = จองมือ |
-| เครื่องหลับตอน 06:55 | pmset ไม่ได้ตั้ง / เครื่องรีบูตแล้วไม่ auto-login | `pmset -g \| grep sleep` ต้อง 0; เปิด auto-login |
-| agent ไม่ทำงานหลังรีบูต | ไม่ได้ auto-login | เปิด auto-login |
+- `status` timeout ส่วนใหญ่มาจาก host ไม่มี route/IP ไทยที่ระบบยอมรับ หรือ network ใช้งานไม่ได้.
+- ถ้ารัน Compose ด้วยมือแล้วเจอ Docker permission error ต้องเพิ่มสิทธิ์ให้ user ปัจจุบันเข้าถึง Docker; system services ที่ติดตั้งไว้รันด้วย root.
+- `flock: failed to execute` หมายถึง Docker ถูกย้ายหรือลบออก; ติดตั้ง Docker Engine จาก official Ubuntu packages แล้วรัน setup ซ้ำเพื่ออัปเดต path.
+- ถ้าย้าย checkout ไป path ใหม่ ต้องรัน `sh scripts/setup-ubuntu.sh` ซ้ำเพื่อสร้าง `WorkingDirectory` ใหม่.
 
 ## 7. อ้างอิง
 
@@ -221,4 +221,4 @@ sudo systemctl reset-failed botbookyoucourt-race.service botbookyoucourt-fallbac
 - **Play slot:** Sat+Sun 17:00–19:00, court priority `[5, 4, any]` (2 ชม. = 2 accounts เพราะ 1 จอง/user/วัน).
 - **Court map:** 01→39, 02→40, 03→41, 04→51, 05→52 · `sportTypeId=3` · `sportStationId=4`.
 - **Grid values:** `1`=ว่าง, `-1`=ถูกจอง, `null`/`.`=ปิด.
-- **Host:** Mac mini M4 บ้าน (Thai IP). repo private `onepiecepuracr-satod07/botbookyoucourt`.
+- **Host:** Mac mini M4 บ้าน (Thai IP). repo private `TERIOS000/NetRunner2.0`.

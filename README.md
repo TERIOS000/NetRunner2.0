@@ -1,4 +1,4 @@
-# botbookyoucourt
+# NetRunner2.0
 
 Bot จองสนามเทนนิส TU (bookyourcourt.psm.tu.ac.th) อัตโนมัติ — pure HTTP, ไม่ใช้ browser
 
