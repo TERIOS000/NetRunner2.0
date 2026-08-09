@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Bot that auto-books TU tennis courts (bookyourcourt.psm.tu.ac.th) via pure HTTP (no browser). Primary deployment: Ubuntu Server with Docker + systemd timers (also works on Mac mini via launchd — legacy). The TU API geo-blocks non-Thai IPs, so live API calls only work from a Thai IP.
+Bot that auto-books TU tennis courts (bookyourcourt.psm.tu.ac.th) via pure HTTP (no browser). Primary deployment: Ubuntu Server with Docker + Portainer persistent container (also works via systemd timers or Mac mini launchd — legacy). The TU API geo-blocks non-Thai IPs, so live API calls only work from a Thai IP.
 
 ## Commands
 
@@ -58,9 +58,15 @@ Tests colocate as `*.test.ts` next to source. Focus on `core/` (pure, determinis
 
 ## Deployment / ops
 
-Production = Ubuntu Server with Docker + systemd timers: `botbookyoucourt-race.timer` (Sun,Mon 06:55 ICT) + `botbookyoucourt-fallback.timer` (Sun,Mon 07:10 ICT). Bootstrap with `sh scripts/setup-ubuntu.sh` (requires Docker Engine + Compose v2 pre-installed). Verify with `docker compose run --rm dry-run` (safe) or `sudo systemctl start botbookyoucourt-race.service` (real). `scripts/docker-run.sh` pings healthchecks.io (dead-man switch).
+Production = Ubuntu Server with Portainer persistent container (`docker compose up -d scheduler`). Legacy: systemd timers via `sh scripts/setup-ubuntu.sh` (Sun,Mon 06:55 ICT). Full runbook: `docs/DEPLOYMENT.md`.
 
-Legacy: also runs on Mac mini via launchd — bootstrap with `zsh scripts/setup-macmini.sh`. Full runbook: `docs/DEPLOYMENT.md`.
+```sh
+docker compose build scheduler
+docker compose up -d scheduler          # persistent (Portainer-visible)
+docker compose logs -f scheduler
+docker compose run --rm dry-run         # safe smoke test
+docker compose run --rm fallback        # book immediately (--now)
+```
 
 ## Notes
 

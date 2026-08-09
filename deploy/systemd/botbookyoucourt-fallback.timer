@@ -1,8 +1,8 @@
 [Unit]
-Description=Run BookYourCourt fallback job Sunday and Monday at 07:10 ICT
+Description=Run BookYourCourt fallback job daily at 07:10 ICT
 
 [Timer]
-OnCalendar=Sun,Mon *-*-* 07:10:00 Asia/Bangkok
+OnCalendar=*-*-* 07:10:00 Asia/Bangkok
 Persistent=true
 AccuracySec=1s
 Unit=botbookyoucourt-fallback.service
