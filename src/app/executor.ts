@@ -44,19 +44,9 @@ async function runTask(
   while (Date.now() < deadline.getTime()) {
     for (const courtId of coordinator.reorder(task.courtPriority)) {
       if (Date.now() >= deadline.getTime()) break;
+      let bookingId: number;
       try {
-        const bookingId = await client.createBooking(targetDate, todayDate, task.hour, courtId);
-        coordinator.reportWin(courtId);
-        const view = await client.getBooking(bookingId);
-        const result: TaskResult = {
-          account: task.credentials.name,
-          hour: task.hour,
-          ok: true,
-          courtNumber: courtNumberOf(courtId),
-          bookingCode: view.booking.bookingCode,
-        };
-        log.info(`${label} BOOKED`, result);
-        return result;
+        bookingId = await client.createBooking(targetDate, todayDate, task.hour, courtId);
       } catch (error) {
         lastError = error instanceof Error ? error.message : String(error);
         if (error instanceof AbpError && error.unAuthorizedRequest) {
@@ -65,7 +55,30 @@ async function runTask(
         } else {
           log.warn(`${label} court ${courtNumberOf(courtId)} failed: ${lastError}`);
         }
+        continue;
       }
+
+      // Booking succeeded — the slot is ours. Everything below is best-effort.
+      coordinator.reportWin(courtId);
+
+      let bookingCode: string | undefined;
+      try {
+        const view = await client.getBooking(bookingId);
+        bookingCode = view.booking.bookingCode;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        log.warn(`${label} getBooking failed (booking id ${bookingId}): ${msg}`);
+      }
+
+      const result: TaskResult = {
+        account: task.credentials.name,
+        hour: task.hour,
+        ok: true,
+        courtNumber: courtNumberOf(courtId),
+        bookingCode,
+      };
+      log.info(`${label} BOOKED`, result);
+      return result;
     }
     await sleep(retryDelayMs);
   }
