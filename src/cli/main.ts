@@ -180,7 +180,7 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
   const summary = [
     ...results.map((r) =>
       r.ok
-        ? `✅ ${r.account} ${r.hour}:00 court ${r.courtNumber} (${r.bookingCode})`
+        ? `✅ ${r.account} ${r.hour}:00 court ${r.courtNumber}${r.bookingCode ? ` (${r.bookingCode})` : ''}`
         : `❌ ${r.account} ${r.hour}:00 — ${r.reason}`,
     ),
     ...failed.map((f) => `⚠️ ${f.name} — auth failed after retries: ${f.reason}`),
