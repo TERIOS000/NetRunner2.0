@@ -37,11 +37,22 @@ async function runTask(
   deadline: Date,
   retryDelayMs: number,
   coordinator: SameCourtCoordinator,
+  wonAccounts: Set<string>,
 ): Promise<TaskResult> {
   const label = `${task.credentials.name}@${task.hour}:00`;
   let lastError = 'no attempt made';
 
   while (Date.now() < deadline.getTime()) {
+    if (wonAccounts.has(task.credentials.name)) {
+      const result: TaskResult = {
+        account: task.credentials.name,
+        hour: task.hour,
+        ok: false,
+        reason: 'account already won earlier',
+      };
+      log.info(`${label} skipped — account ${task.credentials.name} already booked`);
+      return result;
+    }
     for (const courtId of coordinator.reorder(task.courtPriority)) {
       if (Date.now() >= deadline.getTime()) break;
       let bookingId: number;
@@ -70,12 +81,13 @@ async function runTask(
         log.warn(`${label} getBooking failed (booking id ${bookingId}): ${msg}`);
       }
 
+      wonAccounts.add(task.credentials.name);
       const result: TaskResult = {
         account: task.credentials.name,
         hour: task.hour,
         ok: true,
         courtNumber: courtNumberOf(courtId),
-        bookingCode,
+        ...(bookingCode !== undefined ? { bookingCode } : {}),
       };
       log.info(`${label} BOOKED`, result);
       return result;
@@ -102,12 +114,13 @@ export async function executePlan(
   retryDelayMs: number,
 ): Promise<TaskResult[]> {
   const coordinator = new SameCourtCoordinator();
+  const wonAccounts = new Set<string>();
   log.info(`executing ${tasks.length} booking tasks for ${formatIso(targetDate)}`);
   return Promise.all(
     tasks.map((task) => {
       const client = clients.get(task.credentials.name);
       if (!client) throw new Error(`no client for account "${task.credentials.name}"`);
-      return runTask(client, task, targetDate, todayDate, deadline, retryDelayMs, coordinator);
+      return runTask(client, task, targetDate, todayDate, deadline, retryDelayMs, coordinator, wonAccounts);
     }),
   );
 }
