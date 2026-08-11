@@ -1,6 +1,7 @@
 {
   "accounts": [
-    { "name": "M", "envPrefix": "TU_A" }
+    { "name": "Alice", "envPrefix": "TU_A" },
+    { "name": "Bob", "envPrefix": "TU_B" }
   ],
   "schedule": [
     {

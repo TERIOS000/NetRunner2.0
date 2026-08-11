@@ -40,7 +40,7 @@ Hexagonal-lite. Dependency flows one way: `cli → app → core`; adapters imple
   - `ports.ts` — `BookingGateway`, `Notifier`, `BookingStore` interfaces
   - `ict.ts` — all date/time math in ICT (UTC+7); dates are `IctDate` records, not raw `Date`
 - `src/adapters/` — port implementations: `bookyourcourt.ts` (HTTP), `telegram.ts`, `booking-store.ts` (`state/booked-<date>.json`), `logger.ts`
-- `src/app/` — orchestration: `executor.ts` (race loop: fire bookings until success or deadline), `config.ts` (loads `config.json` + `.env`)
+- `src/app/` — orchestration: `executor.ts` (race loop: fire bookings until success or deadline), `config.ts` (loads `config.json` + `.env`; copy from `config.example.json`)
 - `src/cli/main.ts` — composition root: arg parsing, wires adapters into app/core
 
 To add a new external (e.g. another notifier): define/use a port in `core/ports.ts`, implement it in `adapters/`, wire in `cli/main.ts`, test with a fake implementing the same port (pattern in `src/app/executor.test.ts`).

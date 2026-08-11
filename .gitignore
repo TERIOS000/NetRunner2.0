@@ -5,3 +5,4 @@ state/
 .env
 *.har
 .DS_Store
+config.json
