@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFileBookingStore } from '../adapters/booking-store.js';
 import { BookYourCourtClient } from '../adapters/bookyourcourt.js';
@@ -106,7 +106,33 @@ function describePlan(plan: Plan): string {
   return lines.join('\n');
 }
 
+function acquireLock(): void {
+  const lockDir = join(process.cwd(), 'state', '.run.lock');
+  try {
+    mkdirSync(lockDir);
+  } catch {
+    // Lock exists — check if holder is still alive
+    try {
+      const holderPid = Number.parseInt(readFileSync(join(lockDir, 'pid'), 'utf8'), 10);
+      try {
+        process.kill(holderPid, 0);
+        log.info(`another instance is running (pid ${holderPid}) — exiting`);
+        process.exit(0);
+      } catch {
+        // Stale lock — holder is dead
+      }
+    } catch {
+      // Can't read pid
+    }
+    rmSync(lockDir, { recursive: true, force: true });
+    mkdirSync(lockDir);
+  }
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }));
+}
+
 async function commandRun(config: Config, args: CliArgs): Promise<void> {
+  acquireLock();
   const store = createFileBookingStore(join(process.cwd(), 'state'));
   const notifier = createTelegramNotifier(config.notify.telegram);
   const credentials = loadCredentials(config, log.warn);
@@ -122,11 +148,9 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
   const pending = pendingTasks(plan.tasks, marks);
 
   if (pending.length === 0) {
-    const summary = marks
-      .map((m) => `✅ ${m.account} ${m.hour}:00 court ${m.courtNumber} (${m.bookingCode}) [already booked]`)
-      .join('\n');
-    log.info(`all tasks already booked for ${formatIso(plan.targetDate)} — skipping`);
-    await notifier.notify(`${header}\n${summary}`);
+    log.info(
+      `all tasks already booked for ${formatIso(plan.targetDate)} — skipping\n${marks.map((m) => `✅ ${m.account} ${m.hour}:00 court ${m.courtNumber} (${m.bookingCode})`).join('\n')}`,
+    );
     return;
   }
 
@@ -166,7 +190,7 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
 
   const newMarks: BookingMark[] = [];
   for (const r of results) {
-    if (r.ok && r.courtNumber !== undefined && r.bookingCode !== undefined) {
+    if (r.ok && r.courtNumber !== undefined) {
       newMarks.push({
         account: r.account,
         hour: r.hour,
