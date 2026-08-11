@@ -5,7 +5,7 @@ export const bookingMarkSchema = z.object({
   account: z.string().min(1),
   hour: z.number().int().min(0).max(23),
   courtNumber: z.number().int().min(1).max(5),
-  bookingCode: z.string().min(1),
+  bookingCode: z.string().min(1).optional(),
 });
 
 export type BookingMark = z.infer<typeof bookingMarkSchema>;
