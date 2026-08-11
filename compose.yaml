@@ -33,3 +33,9 @@ services:
     <<: *bot-service
     command: ["status"]
 
+  scheduler:
+    <<: *bot-service
+    restart: unless-stopped
+    entrypoint: ["sh", "/app/scripts/scheduler.sh"]
+    command: []
+

@@ -24,8 +24,9 @@ RUN bun install --frozen-lockfile --production
 
 COPY src ./src
 COPY scripts/docker-run.sh ./scripts/docker-run.sh
+COPY scripts/scheduler.sh ./scripts/scheduler.sh
 
-RUN chmod 0755 ./scripts/docker-run.sh \
+RUN chmod 0755 ./scripts/docker-run.sh ./scripts/scheduler.sh \
     && mkdir -p /app/logs /app/state
 
 ENV NODE_ENV=production \

@@ -117,6 +117,75 @@ tar -czf botbookyoucourt-state-$(date +%F).tar.gz state/
 
 restore `state/` เข้า checkout ใหม่ก่อน enable timers และห้ามเปิด timers บนเครื่องเก่ากับเครื่องใหม่พร้อมกัน. เก็บ `.env` แยกไว้ใน backup ที่ปลอดภัย เพราะไฟล์นี้ถูกตัดออกจาก Docker build context และ Git โดยตั้งใจ.
 
+## 2a. Portainer: Persistent Docker Compose (Alternative)
+
+ถ้าคุณใช้ Portainer หรือต้องการให้ container รันตลอดเวลา (visible ใน Portainer dashboard) แทน systemd timers — ใช้ `scheduler` service แทน.
+
+**ข้อแตกต่างจาก systemd:**
+
+| | systemd | Portainer scheduler |
+|---|---|---|
+| Container lifecycle | เริ่ม + จบใน ~2 นาที | รัน 24/7 (`restart: unless-stopped`) |
+| ตัวปลุก | systemd timer 06:55 | `scripts/scheduler.sh` sleep loop ตื่น 06:50 |
+| มองเห็นใน Portainer | ❌ | ✅ |
+| Fallback timer | มี (07:10) | ไม่มี (ยิงรอบเดียว) |
+| Post-reboot catch-up | `Persistent=true` | ยิงทันทีตอน container start |
+
+โค้ด booking (auth, planner, race loop, marker, Telegram, healthchecks) **เหมือนกันทั้งหมด** — เปลี่ยนแค่ตัวปลุก.
+
+### Setup
+
+```sh
+docker compose build scheduler
+docker compose up -d scheduler
+docker compose logs -f scheduler     # ดู startup fire + daily loop
+```
+
+container จะยิง `docker-run.sh run` ทันทีที่ start (post-reboot catch-up) แล้วเข้าสู่ daily loop: sleep จนถึง 06:50 ICT → fire → sleep ใหม่.
+
+### ตรวจสอบและทดสอบ
+
+```sh
+docker compose ps scheduler           # ดูสถานะ container
+docker compose logs scheduler --tail 10
+
+# safe — ไม่จอง
+docker compose run --rm dry-run
+docker compose run --rm status
+
+# live — จองทันที (--now, 60s deadline)
+docker compose run --rm fallback
+```
+
+### การแก้ไข config และโค้ดขณะรัน
+
+| แก้ไฟล์ | ต้อง rebuild/restart? | หมายเหตุ |
+|---|---|---|
+| `config.json` | ❌ ไม่ต้อง | bind mount `:ro` — container เห็นทันที, scheduler อ่านใหม่ทุกครั้งที่ fire |
+| `.env` | ⚠️ restart | `env_file` อ่านเฉพาะตอน container start |
+| `src/` (โค้ด) | ✅ rebuild + restart | โค้ดถูก COPY ใน Dockerfile, ไม่ได้ mount |
+| `scripts/` | ✅ rebuild + restart | เหมือนข้างบน |
+| `Dockerfile` / `compose.yaml` | ✅ rebuild + restart | — |
+
+```sh
+# .env เปลี่ยน → restart พอ
+docker compose up -d scheduler
+
+# โค้ด/scripts เปลี่ยน → rebuild + restart
+docker compose build scheduler
+docker compose up -d scheduler
+```
+
+### อัปเดตโค้ดจาก Git
+
+```sh
+git pull
+docker compose build scheduler
+docker compose up -d scheduler        # recreate container ด้วย image ใหม่
+```
+
+marker: ลบ `state/booked-<date>.json` ถ้าต้องการบังคับให้ยิงจองวันนั้นใหม่.
+
 ## 3. Mac mini / launchd (Legacy)
 
 > ⚠️ **Legacy deployment** — Ubuntu/Docker (§2) คือ primary. Mac mini ยังใช้ได้แต่ maintenance overhead สูงกว่า (ต้อง auto-login, pmset no-sleep, GUI session). section นี้คงไว้สำหรับ migrate off หรือ reference.
