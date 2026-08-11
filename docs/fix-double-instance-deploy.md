@@ -81,9 +81,52 @@ grep -c 'INFO plan:' logs/$(date +%F).log
 
 ---
 
+## Part 2 — Ubuntu Docker: systemd + Portainer ชนกัน
+
+เกิดบน host Ubuntu ที่ย้ายจาก systemd timers ไป Portainer scheduler แต่**ลืมปิด
+systemd** — ทั้งสองยิงเวลา 06:55 พร้อมกัน:
+
+```
+06:55  systemd timer       → docker compose run race   (lock: flock /run/lock)
+06:55  Portainer scheduler  → docker-run.sh run        (ไม่มี lock ร่วมกัน)
+       ↓
+       ทั้งคู่ยิง createBooking ของ account เดียวกัน → server ประมวลผลทั้งคู่
+       → ได้ booking code 2 อันสำหรับ slot เดียวกัน
+```
+
+สาเหตุ: `flock` ใน systemd unit กันได้แค่ systemd ชนกันเอง — Portainer ใช้
+`docker-run.sh` ตรง ๆ ไม่ผ่าน flock นั้น. กันไม่ได้ข้ามตัวปลุกคนละระบบ.
+
+### ตรวจสอบว่ามีตัวปลุกซ้ำจริง
+
+```sh
+# ตัวปลุก 1: systemd timers
+sudo systemctl list-timers 'botbookyoucourt-*'
+
+# ตัวปลุก 2: Portainer container
+docker compose ps
+```
+
+ถ้าเห็น timer ยัง active อยู่ + มี `scheduler` container → มี 2 ตัวปลุก = เสี่ยง double booking.
+
+### แก้: ปิด systemd เหลือตัวเดียว (แนะนำ Portainer)
+
+```sh
+sudo systemctl disable --now botbookyoucourt-race.timer botbookyoucourt-fallback.timer
+```
+
+### ยืนยันเหลือตัวเดียว
+
+```sh
+sudo systemctl list-timers 'botbookyoucourt-*'   # ต้อง 0 timers
+docker compose ps scheduler                       # ต้อง Up (running)
+```
+
+---
+
 ## Rollback
 
-ถ้าอยากคืน agent ให้ครบใหม่:
+ถ้าอยากคืน agent ให้ครบใหม่ (Mac mini):
 
 ```sh
 zsh scripts/setup-macmini.sh
