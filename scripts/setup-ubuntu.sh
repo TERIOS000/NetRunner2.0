@@ -17,7 +17,14 @@ command -v flock >/dev/null 2>&1 || fail "flock (util-linux) is required"
 DOCKER=$(command -v docker)
 FLOCK=$(command -v flock)
 [ -f "$REPO/.env" ] || fail "missing $REPO/.env; copy .env.example and add credentials first"
-[ -f "$REPO/config.json" ] || fail "missing $REPO/config.json"
+if [ ! -f "$REPO/config.json" ]; then
+  if [ -f "$REPO/config.example.json" ]; then
+    cp "$REPO/config.example.json" "$REPO/config.json"
+    log "created config.json from config.example.json — edit it with your accounts & schedule"
+  else
+    fail "missing $REPO/config.json (no config.example.json to copy either)"
+  fi
+fi
 
 if [ "$(id -u)" -eq 0 ]; then
   SUDO=

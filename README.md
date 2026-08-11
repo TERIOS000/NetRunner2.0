@@ -13,10 +13,11 @@ Bot จองสนามเทนนิส TU (bookyourcourt.psm.tu.ac.th) อ�
 
 ```sh
 bun install
-cp .env.example .env   # กรอก credentials + telegram token + HEALTHCHECK_URL
+cp .env.example .env        # กรอก credentials + telegram token + HEALTHCHECK_URL
+cp config.example.json config.json   # ปรับวัน/เวลา/ลำดับ court ตามต้องการ
 ```
 
-`config.json` — วัน/เวลา/ลำดับ court ที่ต้องการ, เวลายิง (`race.fireAt`)
+`config.json` — วัน/เวลา/ลำดับ court ที่ต้องการ, เวลายิง (`race.fireAt`) (ดูตัวอย่างจาก `config.example.json`)
 
 ## คำสั่ง
 
