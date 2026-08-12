@@ -128,7 +128,10 @@ function acquireLock(): void {
     mkdirSync(lockDir);
   }
   writeFileSync(join(lockDir, 'pid'), String(process.pid));
-  process.on('exit', () => rmSync(lockDir, { recursive: true, force: true }));
+  const cleanupLock = () => rmSync(lockDir, { recursive: true, force: true });
+  process.on('exit', cleanupLock);
+  process.on('SIGINT', () => process.exit(0));
+  process.on('SIGTERM', () => process.exit(0));
 }
 
 async function commandRun(config: Config, args: CliArgs): Promise<void> {
