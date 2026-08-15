@@ -1,7 +1,7 @@
 {
   "accounts": [
     { "name": "P", "envPrefix": "TU_A" },
-    { "name": "Yoh", "envPrefix": "TU_A" }
+    { "name": "Yoh", "envPrefix": "TU_B" }
   ],
   "schedule": [
     {
@@ -14,9 +14,9 @@
     }
   ],
   "race": {
-    "fireAt": "06:59:58",
-    "deadline": "07:02:00",
-    "retryDelayMs": 500,
+    "fireAt": "07:00:00",
+    "deadline": "07:00:10",
+    "retryDelayMs": 2000,
     "requestTimeoutMs": 8000,
     "authAttempts": 3,
     "authRetryDelayMs": 300
