@@ -39,14 +39,16 @@ function randomBetween(min: number, max: number): number {
 type FailureKind = 'closed' | 'rateLimited' | 'retry';
 
 /**
- * Maps a failed CreateOrEdit to a strategy. Thai messages come from the server
- * and are stable for now; matching on the full error text (which includes the
- * ABP `message` and `details`) avoids hard-coding the ABP envelope shape.
+ * Maps a failed CreateOrEdit to a strategy. The server localizes these
+ * messages — Thai by default, but English for some accounts/requests (e.g.
+ * "Booking too frequent (You are booking too frequently...) "). Matching on
+ * both variants avoids misclassifying a rate limit as a plain failure, which
+ * would burn the remaining rate-limit quota on the other courts.
  */
 function classifyFailure(error: unknown): FailureKind {
   const message = error instanceof AbpError ? error.message : String(error);
   if (message.includes('ปิดทำการ')) return 'closed';
-  if (message.includes('จองถี่เกินไป')) return 'rateLimited';
+  if (message.includes('จองถี่เกินไป') || /booking too frequen/i.test(message)) return 'rateLimited';
   return 'retry';
 }
 
@@ -204,7 +206,17 @@ export async function executePlan(
       // others get a random offset so two accounts never hit the API in lockstep.
       const stagger = index === 0 ? 0 : randomBetween(0, timing.accountStaggerMaxMs);
       return sleep(stagger).then(() =>
-        runTask(client, task, targetDate, todayDate, deadline, retryDelayMs, coordinator, wonAccounts, timing),
+        runTask(
+          client,
+          task,
+          targetDate,
+          todayDate,
+          deadline,
+          retryDelayMs,
+          coordinator,
+          wonAccounts,
+          timing,
+        ),
       );
     }),
   );

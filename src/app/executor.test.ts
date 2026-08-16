@@ -70,6 +70,15 @@ const closedError = (): AbpError =>
 const rateLimitError = (): AbpError =>
   new AbpError('/CreateOrEdit', 'จองถี่เกินไป', 'คุณทำรายการจองถี่เกินไป กรุณารอสักครู่แล้วลองใหม่', false);
 
+// The server sometimes returns the same rate-limit error in English.
+const rateLimitErrorEn = (): AbpError =>
+  new AbpError(
+    '/CreateOrEdit',
+    'Booking too frequent',
+    'You are booking too frequently. Please wait a moment and try again (rate-limited for fairness and to prevent automated booking).',
+    false,
+  );
+
 describe('executePlan', () => {
   test('books the first available court and returns the booking code', async () => {
     const gw = new FakeGateway('a', () => 1001);
@@ -209,6 +218,26 @@ describe('executePlan', () => {
     expect(results[0]).toMatchObject({ ok: false });
     // A 60ms backoff leaves room for only a handful of attempts in the 200ms
     // window, whereas the 5ms retry delay alone would allow dozens.
+    expect(gw.createCalls.length).toBeGreaterThan(1);
+    expect(gw.createCalls.length).toBeLessThan(6);
+  });
+
+  test('backs off when the server reports booking too frequently in English', async () => {
+    const gw = new FakeGateway('a', () => {
+      throw rateLimitErrorEn();
+    });
+    const results = await executePlan(
+      new Map([['a', gw]]),
+      [task('a', 18)],
+      DATE,
+      DATE,
+      new Date(Date.now() + 200),
+      5,
+      { attemptMinDelayMs: 0, attemptMaxDelayMs: 0, accountStaggerMaxMs: 0, rateLimitBackoffMs: 60 },
+    );
+    expect(results[0]).toMatchObject({ ok: false });
+    // Same bounded-attempt expectation as the Thai variant: a 60ms backoff
+    // leaves room for only a handful of attempts in the 200ms window.
     expect(gw.createCalls.length).toBeGreaterThan(1);
     expect(gw.createCalls.length).toBeLessThan(6);
   });
