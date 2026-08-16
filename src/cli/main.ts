@@ -162,6 +162,11 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
     today,
     deadline,
     config.race.retryDelayMs,
+    {
+      attemptMinDelayMs: config.race.attemptMinDelayMs,
+      attemptMaxDelayMs: config.race.attemptMaxDelayMs,
+      accountStaggerMaxMs: config.race.accountStaggerMaxMs,
+    },
   );
 
   const newMarks: BookingMark[] = [];

@@ -117,4 +117,31 @@ describe('executePlan', () => {
       executePlan(new Map([['a', gw]]), [task('missing', 18)], DATE, DATE, new Date(Date.now() + 100), 5),
     ).rejects.toThrow(/no client for account "missing"/);
   });
+
+  test('paces attempts with jitter and staggers account starts', async () => {
+    const gwA = new FakeGateway('a', () => {
+      throw new Error('court taken');
+    });
+    const gwB = new FakeGateway('b', () => {
+      throw new Error('court taken');
+    });
+    const start = Date.now();
+    await executePlan(
+      new Map([
+        ['a', gwA],
+        ['b', gwB],
+      ]),
+      [task('a', 18), task('b', 19)],
+      DATE,
+      DATE,
+      new Date(Date.now() + 500),
+      10,
+      { attemptMinDelayMs: 30, attemptMaxDelayMs: 30, accountStaggerMaxMs: 30 },
+    );
+    // Jitter (30ms) between attempts means at least 2 attempts per account
+    // can't happen back-to-back in a burst; stagger delays the 2nd account.
+    expect(gwA.createCalls.length).toBeGreaterThan(1);
+    expect(gwB.createCalls.length).toBeGreaterThan(1);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(90);
+  });
 });

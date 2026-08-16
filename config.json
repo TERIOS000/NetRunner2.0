@@ -17,6 +17,9 @@
     "fireAt": "07:00:00",
     "deadline": "07:00:10",
     "retryDelayMs": 2000,
+    "attemptMinDelayMs": 500,
+    "attemptMaxDelayMs": 1300,
+    "accountStaggerMaxMs": 600,
     "requestTimeoutMs": 8000,
     "authAttempts": 3,
     "authRetryDelayMs": 300

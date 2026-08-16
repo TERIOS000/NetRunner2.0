@@ -29,14 +29,23 @@ export const configSchema = z.object({
   schedule: z
     .array(z.object({ days: z.array(weekdaySchema).min(1), slots: z.array(slotSchema).min(1) }))
     .min(1),
-  race: z.object({
-    fireAt: z.string().regex(/^\d{2}:\d{2}:\d{2}$/),
-    deadline: z.string().regex(/^\d{2}:\d{2}:\d{2}$/),
-    retryDelayMs: z.number().int().min(50),
-    requestTimeoutMs: z.number().int().min(500).default(8000),
-    authAttempts: z.number().int().min(1).default(3),
-    authRetryDelayMs: z.number().int().min(50).default(300),
-  }),
+  race: z
+    .object({
+      fireAt: z.string().regex(/^\d{2}:\d{2}:\d{2}$/),
+      deadline: z.string().regex(/^\d{2}:\d{2}:\d{2}$/),
+      retryDelayMs: z.number().int().min(50),
+      requestTimeoutMs: z.number().int().min(500).default(8000),
+      authAttempts: z.number().int().min(1).default(3),
+      authRetryDelayMs: z.number().int().min(50).default(300),
+      // Human-like pacing: random delay between consecutive booking attempts
+      // and a random start offset per account, so requests don't look scripted.
+      attemptMinDelayMs: z.number().int().min(0).default(500),
+      attemptMaxDelayMs: z.number().int().min(0).default(1300),
+      accountStaggerMaxMs: z.number().int().min(0).default(600),
+    })
+    .refine((r) => r.attemptMinDelayMs <= r.attemptMaxDelayMs, {
+      message: 'race.attemptMinDelayMs must be <= race.attemptMaxDelayMs',
+    }),
   notify: z.object({ telegram: z.boolean() }),
 });
 
