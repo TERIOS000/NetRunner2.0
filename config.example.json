@@ -1,22 +1,26 @@
 {
   "accounts": [
-    { "name": "Alice", "envPrefix": "TU_A" },
-    { "name": "Bob", "envPrefix": "TU_B" }
+    { "name": "P", "envPrefix": "TU_A" },
+    { "name": "Yoh", "envPrefix": "TU_B" }
   ],
   "schedule": [
     {
       "days": ["mon", "tue", "wed", "thu", "fri"],
-      "slots": [{ "time": "13:00-14:00", "courts": [2, 4, "any"] }]
+      "slots": [{ "time": "18:00-20:00", "courts": [2, 4, "any"] }]
     },
     {
       "days": ["sat", "sun"],
-      "slots": [{ "time": "19:00-20:00", "courts": [2, 1, "any"] }]
+      "slots": [{ "time": "18:00-20:00", "courts": [2, 1, "any"] }]
     }
   ],
   "race": {
-    "fireAt": "06:59:58",
-    "deadline": "07:02:00",
-    "retryDelayMs": 500,
+    "fireAt": "07:00:00",
+    "deadline": "07:00:10",
+    "retryDelayMs": 2000,
+    "attemptMinDelayMs": 500,
+    "attemptMaxDelayMs": 1300,
+    "accountStaggerMaxMs": 600,
+    "rateLimitBackoffMs": 5000,
     "requestTimeoutMs": 8000,
     "authAttempts": 3,
     "authRetryDelayMs": 300

@@ -31,6 +31,7 @@ TU API `bookyourcourtapi.psm.tu.ac.th` (49.229.83.38) **บล็อก IP ต�
 | `botbookyoucourt-fallback.timer` | Sun, Mon 07:10 ICT | `fallback` (`run --now`) | เก็บตกถ้า race แพ้ (demand ต่ำ คอร์ตมักว่างถึง ~08:24) |
 
 กลไกกันพลาด:
+- **Single-instance lock** — `run.sh` จับ `state/.run.lock` (`mkdir` atomic + เช็ค pid stale) ก่อนรัน. ถ้ามี instance อื่นถืออยู่ → `exit 0` เงียบ (ไม่ ping healthcheck fail). กันเคส 2 process ยิงชนกัน (agent ซ้ำ / fallback ทับ race ที่ยังค้าง) ที่จะทำให้บอทจองแข่งกันเองจน quota เต็ม แล้วรายงาน false-`❌`.
 - **Idempotent marker** — จองสำเร็จ → เขียน `state/booked-<targetDate>.json` เก็บ `(account, hour, bookingCode)`. `run` โหลด marker ก่อน → skip task ที่ได้แล้ว, auth เฉพาะ account ที่ค้าง. fallback จึงไม่จองซ้ำ/ไม่แจ้ง false-❌.
 - **Telegram** — แจ้งผลทุกครั้ง (✅/❌) + แจ้ง crash. เงียบ = ผิดปกติ.
 - **Dead-man switch (healthchecks.io)** — `scripts/docker-run.sh` ping `/start` + success + `/$code`. ถ้าเครื่องตาย/timer ไม่ยิง → healthchecks ไม่ได้ ping ตาม cron → เด้งเตือนเอง.
@@ -116,6 +117,75 @@ tar -czf botbookyoucourt-state-$(date +%F).tar.gz state/
 
 restore `state/` เข้า checkout ใหม่ก่อน enable timers และห้ามเปิด timers บนเครื่องเก่ากับเครื่องใหม่พร้อมกัน. เก็บ `.env` แยกไว้ใน backup ที่ปลอดภัย เพราะไฟล์นี้ถูกตัดออกจาก Docker build context และ Git โดยตั้งใจ.
 
+## 2a. Portainer: Persistent Docker Compose (Alternative)
+
+ถ้าคุณใช้ Portainer หรือต้องการให้ container รันตลอดเวลา (visible ใน Portainer dashboard) แทน systemd timers — ใช้ `scheduler` service แทน.
+
+**ข้อแตกต่างจาก systemd:**
+
+| | systemd | Portainer scheduler |
+|---|---|---|
+| Container lifecycle | เริ่ม + จบใน ~2 นาที | รัน 24/7 (`restart: unless-stopped`) |
+| ตัวปลุก | systemd timer 06:55 | `scripts/scheduler.sh` sleep loop ตื่น 06:50 |
+| มองเห็นใน Portainer | ❌ | ✅ |
+| Fallback timer | มี (07:10) | ไม่มี (ยิงรอบเดียว) |
+| Post-reboot catch-up | `Persistent=true` | ยิงทันทีตอน container start |
+
+โค้ด booking (auth, planner, race loop, marker, Telegram, healthchecks) **เหมือนกันทั้งหมด** — เปลี่ยนแค่ตัวปลุก.
+
+### Setup
+
+```sh
+docker compose build scheduler
+docker compose up -d scheduler
+docker compose logs -f scheduler     # ดู startup fire + daily loop
+```
+
+container จะยิง `docker-run.sh run` ทันทีที่ start (post-reboot catch-up) แล้วเข้าสู่ daily loop: sleep จนถึง 06:50 ICT → fire → sleep ใหม่.
+
+### ตรวจสอบและทดสอบ
+
+```sh
+docker compose ps scheduler           # ดูสถานะ container
+docker compose logs scheduler --tail 10
+
+# safe — ไม่จอง
+docker compose run --rm dry-run
+docker compose run --rm status
+
+# live — จองทันที (--now, 60s deadline)
+docker compose run --rm fallback
+```
+
+### การแก้ไข config และโค้ดขณะรัน
+
+| แก้ไฟล์ | ต้อง rebuild/restart? | หมายเหตุ |
+|---|---|---|
+| `config.json` | ❌ ไม่ต้อง | bind mount `:ro` — container เห็นทันที, scheduler อ่านใหม่ทุกครั้งที่ fire |
+| `.env` | ⚠️ restart | `env_file` อ่านเฉพาะตอน container start |
+| `src/` (โค้ด) | ✅ rebuild + restart | โค้ดถูก COPY ใน Dockerfile, ไม่ได้ mount |
+| `scripts/` | ✅ rebuild + restart | เหมือนข้างบน |
+| `Dockerfile` / `compose.yaml` | ✅ rebuild + restart | — |
+
+```sh
+# .env เปลี่ยน → restart พอ
+docker compose up -d scheduler
+
+# โค้ด/scripts เปลี่ยน → rebuild + restart
+docker compose build scheduler
+docker compose up -d scheduler
+```
+
+### อัปเดตโค้ดจาก Git
+
+```sh
+git pull
+docker compose build scheduler
+docker compose up -d scheduler        # recreate container ด้วย image ใหม่
+```
+
+marker: ลบ `state/booked-<date>.json` ถ้าต้องการบังคับให้ยิงจองวันนั้นใหม่.
+
 ## 3. Mac mini / launchd (Legacy)
 
 > ⚠️ **Legacy deployment** — Ubuntu/Docker (§2) คือ primary. Mac mini ยังใช้ได้แต่ maintenance overhead สูงกว่า (ต้อง auto-login, pmset no-sleep, GUI session). section นี้คงไว้สำหรับ migrate off หรือ reference.
@@ -158,8 +228,13 @@ zsh scripts/test-schedule.sh --live   # live: kickstart fallback agent
 ### Operations (Mac legacy)
 
 ```sh
-launchctl list | grep botbookyoucourt
-tail -f logs/$(date +%F).log
+# ดู agent ที่ load + สถานะ
+launchctl list | grep botbookyoucourt              # ใช้ได้เฉพาะใน GUI/Aqua session
+# ⚠️ ผ่าน ssh: launchctl list เห็นเปล่า (คนละ session domain) — ใช้ gui domain แทน
+launchctl print gui/$(id -u) | grep -iE 'book|=> (en|dis)abled'
+
+# log
+tail -f logs/$(date +%F).log          # log แอปรายวัน
 tail -n 40 logs/launchd.out.log logs/launchd.err.log
 
 # reload หลังแก้ config/โค้ด
@@ -201,12 +276,16 @@ sudo systemctl reset-failed 'botbookyoucourt-*'   # clear failed state
 
 | อาการ | สาเหตุ | แก้ |
 |---|---|---|
-| healthchecks แดง | เครื่อง/เน็ต/ไฟดับ | จองมือ แล้วเช็คเครื่อง |
-| `run` ค้างนาน | ไม่ได้ IP ไทย | `curl -m10 https://bookyourcourtapi.psm.tu.ac.th/` ต้องได้ 302 |
-| `❌ ... token` | creds ผิด/หมดอายุ | อัปเดต `.env`, ทดสอบ `bun src/index.ts status` |
-| MITM cert error | corporate proxy (Netskope/Zscaler) | อย่ารันบนเครื่องทำงาน |
-| `no attempt made` | เครื่องหลับจนเลย deadline | เช็ค `pmset -g \| grep sleep` ต้อง 0 |
-| เครื่องหลับตอน 06:55 | pmset ไม่ได้ตั้ง / ไม่ auto-login | `sudo pmset -a sleep 0`; เปิด auto-login |
+| healthchecks แดง เช้า Sun/Mon | เครื่อง/เน็ต/ไฟดับ, agent ไม่ยิง | จองมือทันที (คอร์ตมักว่างถึง ~08:24) แล้วเช็คเครื่อง |
+| Telegram เงียบเช้า Sun/Mon | เหมือนข้างบน (bot ไม่ได้รัน) | ดู `launchd.err.log`, `launchctl list` |
+| `run` ค้างนาน ไม่มี log | connect API timeout = ไม่ได้อยู่ IP ไทย / เน็ตหลุด | ยืนยัน `curl -m10 https://bookyourcourtapi.psm.tu.ac.th/` ได้ 302 |
+| `❌ ... token` ทุก account | creds ใน `.env` ผิด/หมดอายุ | อัปเดต `.env`, ทดสอบ `bun src/index.ts status` |
+| `self signed certificate in certificate chain` ทุก request (TU + Telegram พร้อมกัน) | เครื่องมี corporate MITM proxy (เช่น Netskope/Zscaler) — bun ไม่ trust CA ของ proxy | อย่ารัน bot บนเครื่องทำงาน; ถ้าจำเป็นชั่วคราว: export CA ของ proxy เป็น .pem แล้วตั้ง `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` ใน plist/run.sh |
+| `CreateOrEdit: Internal server error` ทั้งที่ auth ผ่าน | user TU ของ account นั้นหมดอายุ (ไม่มีสิทธิ์จอง) | ต่ออายุ user กับ TU; ระหว่างรอ เอา account ออกจาก `config.json` กัน bot ยิง 500 ฟรี |
+| log `no attempt made` | run เริ่มหลัง `deadline` 07:02 (เครื่องหลับแล้ว launchd ยิงตอนตื่น) | เช็ค pmset (แถวล่าง) + ต้องมี fallback agent 07:10 (`launchctl list \| grep botbook` ต้องเห็น 2 ตัว) |
+| จองไม่ได้แต่ไม่มี error ชัด | slot ถูกคนอื่นแย่ง (race แพ้) | fallback 07:10 เก็บตก; ถ้ายัง = จองมือ |
+| log ซ้ำทุกบรรทัด 2 รอบ / จองสำเร็จแล้วยังได้ `❌ FAILED` | มี launchd agent ซ้ำยิงเวลาเดียวกัน → 2 instance ชนกันเอง จน quota เต็ม (issue #4) | `launchctl print gui/$(id -u) \| grep book` ต้องเหลือแค่ `race`+`fallback`; ลบ agent เกิน (`launchctl bootout gui/$(id -u)/<label>` + `rm ~/Library/LaunchAgents/<label>.plist`). `run.sh` มี lock กันชั้นสองแล้ว |
+| เครื่องหลับตอน 06:55 | pmset ไม่ได้ตั้ง / เครื่องรีบูตแล้วไม่ auto-login | `pmset -g \| grep sleep` ต้อง 0; เปิด auto-login |
 | agent ไม่ทำงานหลังรีบูต | ไม่ได้ auto-login | เปิด auto-login |
 
 ## 5. Windows (พัฒนา/ทดสอบ)

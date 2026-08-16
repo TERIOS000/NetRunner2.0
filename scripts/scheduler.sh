@@ -1,19 +1,44 @@
 #!/bin/sh
-set -u
+set -eu
 
-# Portainer persistent scheduler: runs immediately on start, then daily at 06:50 ICT.
-# The booking code itself handles wait-until-fireAt internally.
+# ── scheduler.sh ────────────────────────────────────────────
+# Persistent entrypoint for Portainer / docker compose up.
+# Fires once on startup (post-reboot catch-up) then loops
+# daily at 06:50 ICT.  The bot itself handles pre-auth,
+# fireAt timing, and the race loop.
+# ─────────────────────────────────────────────────────────────
+
+FIRE_HOUR=6
+FIRE_MIN=50
+TZ="Asia/Bangkok"
+
+log() { printf '[scheduler %s] %s\n' "$(date -Iseconds)" "$*"; }
+
+fire() {
+  log "firing — docker-run.sh run"
+  sh /app/scripts/docker-run.sh run || log "race exited with code $?"
+}
+
+# ── Startup: fire once (post-reboot catch-up; idempotent
+#    marker prevents double-booking) ─────────────────────────
+fire
+
+# ── Daily loop ──────────────────────────────────────────────
+log "entering daily loop — fires at $(printf '%02d:%02d' "$FIRE_HOUR" "$FIRE_MIN") ICT"
 
 while true; do
-  echo "[scheduler] $(date -Iseconds) firing"
-  /app/scripts/docker-run.sh run
-  echo "[scheduler] $(date -Iseconds) done, sleeping until next run"
+  NEXT=$(TZ="$TZ" date -d "$(printf '%02d:%02d' "$FIRE_HOUR" "$FIRE_MIN")" +%s 2>/dev/null)
+  NOW=$(date +%s)
 
-  # Calculate seconds until next 06:50 ICT (UTC+7 = 23:50 UTC)
-  now=$(date +%s)
-  target=$(date -d "23:50" +%s 2>/dev/null || date -j -f "%H:%M" "23:50" +%s 2>/dev/null)
-  if [ "$target" -le "$now" ]; then
-    target=$((target + 86400))
+  if [ "$NEXT" -le "$NOW" ]; then
+    NEXT=$((NEXT + 86400))
   fi
-  sleep $((target - now))
+
+  SLEEP=$((NEXT - NOW))
+  H=$((SLEEP / 3600))
+  M=$(((SLEEP % 3600) / 60))
+  log "next fire at $(TZ=$TZ date -d "@${NEXT}" '+%Y-%m-%d %H:%M:%S %Z'), sleeping ${H}h${M}m"
+
+  sleep "$SLEEP"
+  fire
 done
