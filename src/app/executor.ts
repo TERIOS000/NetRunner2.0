@@ -20,13 +20,34 @@ export interface RaceTiming {
   readonly attemptMaxDelayMs: number;
   /** Random start offset per account so accounts don't fire in lockstep. */
   readonly accountStaggerMaxMs: number;
+  /** Cooldown after the server reports "booking too frequently" (rate limit). */
+  readonly rateLimitBackoffMs: number;
 }
 
-const NO_TIMING: RaceTiming = { attemptMinDelayMs: 0, attemptMaxDelayMs: 0, accountStaggerMaxMs: 0 };
+const NO_TIMING: RaceTiming = {
+  attemptMinDelayMs: 0,
+  attemptMaxDelayMs: 0,
+  accountStaggerMaxMs: 0,
+  rateLimitBackoffMs: 0,
+};
 
 function randomBetween(min: number, max: number): number {
   if (max <= min) return min;
   return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+type FailureKind = 'closed' | 'rateLimited' | 'retry';
+
+/**
+ * Maps a failed CreateOrEdit to a strategy. Thai messages come from the server
+ * and are stable for now; matching on the full error text (which includes the
+ * ABP `message` and `details`) avoids hard-coding the ABP envelope shape.
+ */
+function classifyFailure(error: unknown): FailureKind {
+  const message = error instanceof AbpError ? error.message : String(error);
+  if (message.includes('ปิดทำการ')) return 'closed';
+  if (message.includes('จองถี่เกินไป')) return 'rateLimited';
+  return 'retry';
 }
 
 class SameCourtCoordinator {
@@ -58,6 +79,7 @@ async function runTask(
   const label = `${task.credentials.name}@${task.hour}:00`;
   let lastError = 'no attempt made';
   let firstAttempt = true;
+  const closedCourts = new Set<number>();
 
   while (Date.now() < deadline.getTime()) {
     if (wonAccounts.has(task.credentials.name)) {
@@ -70,7 +92,21 @@ async function runTask(
       log.info(`${label} skipped — account ${task.credentials.name} already booked`);
       return result;
     }
-    for (const courtId of coordinator.reorder(task.courtPriority)) {
+
+    const priority = coordinator.reorder(task.courtPriority).filter((id) => !closedCourts.has(id));
+    if (priority.length === 0) {
+      const result: TaskResult = {
+        account: task.credentials.name,
+        hour: task.hour,
+        ok: false,
+        reason: `all courts closed for the target day (${closedCourts.size} court(s) closed)`,
+      };
+      log.warn(`${label} aborting — every court is closed for the target day`);
+      return result;
+    }
+
+    let rateLimited = false;
+    for (const courtId of priority) {
       if (Date.now() >= deadline.getTime()) break;
       // Pace attempts like a human: the very first shot fires immediately at
       // fireAt, every later attempt waits a random jitter so the burst doesn't
@@ -88,9 +124,24 @@ async function runTask(
         if (error instanceof AbpError && error.unAuthorizedRequest) {
           log.warn(`${label} token rejected, re-authenticating`);
           await client.authenticate(task.credentials.username, task.credentials.password);
-        } else {
-          log.warn(`${label} court ${courtNumberOf(courtId)} failed: ${lastError}`);
+          continue;
         }
+        const kind = classifyFailure(error);
+        if (kind === 'closed') {
+          // A closed court stays closed for the whole day — retrying it only
+          // burns rate-limit quota. Drop it permanently and move on.
+          closedCourts.add(courtId);
+          log.warn(`${label} court ${courtNumberOf(courtId)} closed for the day — will not retry`);
+          continue;
+        }
+        if (kind === 'rateLimited') {
+          // The server is telling us to slow down. Stop this round and back off
+          // before the next attempt.
+          log.warn(`${label} rate limited — backing off ${timing.rateLimitBackoffMs}ms`);
+          rateLimited = true;
+          break;
+        }
+        log.warn(`${label} court ${courtNumberOf(courtId)} failed: ${lastError}`);
         continue;
       }
 
@@ -117,7 +168,10 @@ async function runTask(
       log.info(`${label} BOOKED`, result);
       return result;
     }
-    await sleep(retryDelayMs);
+
+    const remaining = deadline.getTime() - Date.now();
+    const delay = rateLimited ? timing.rateLimitBackoffMs : retryDelayMs;
+    await sleep(Math.max(0, Math.min(delay, remaining)));
   }
 
   const result: TaskResult = {

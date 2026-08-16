@@ -17,6 +17,7 @@ const config = (): Config => ({
     attemptMinDelayMs: 0,
     attemptMaxDelayMs: 0,
     accountStaggerMaxMs: 0,
+    rateLimitBackoffMs: 0,
     requestTimeoutMs: 8000,
     authAttempts: 3,
     authRetryDelayMs: 300,

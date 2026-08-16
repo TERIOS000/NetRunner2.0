@@ -58,6 +58,18 @@ const task = (name: string, hour: number): BookingTask => ({
   courtPriority: [COURT_IDS[3] as number],
 });
 
+const taskCourts = (name: string, hour: number, courtIds: number[]): BookingTask => ({
+  credentials: creds(name),
+  hour,
+  courtPriority: courtIds,
+});
+
+const closedError = (): AbpError =>
+  new AbpError('/CreateOrEdit', 'ไม่สามารถจองได้!', 'สนาม/คอร์ตปิดทำการในวัน/เวลาที่คุณเลือก กรุณาเลือกวันอื่น', false);
+
+const rateLimitError = (): AbpError =>
+  new AbpError('/CreateOrEdit', 'จองถี่เกินไป', 'คุณทำรายการจองถี่เกินไป กรุณารอสักครู่แล้วลองใหม่', false);
+
 describe('executePlan', () => {
   test('books the first available court and returns the booking code', async () => {
     const gw = new FakeGateway('a', () => 1001);
@@ -136,12 +148,68 @@ describe('executePlan', () => {
       DATE,
       new Date(Date.now() + 500),
       10,
-      { attemptMinDelayMs: 30, attemptMaxDelayMs: 30, accountStaggerMaxMs: 30 },
+      { attemptMinDelayMs: 30, attemptMaxDelayMs: 30, accountStaggerMaxMs: 30, rateLimitBackoffMs: 0 },
     );
     // Jitter (30ms) between attempts means at least 2 attempts per account
     // can't happen back-to-back in a burst; stagger delays the 2nd account.
     expect(gwA.createCalls.length).toBeGreaterThan(1);
     expect(gwB.createCalls.length).toBeGreaterThan(1);
     expect(Date.now() - start).toBeGreaterThanOrEqual(90);
+  });
+
+  test('aborts without retrying when every court is closed', async () => {
+    const gw = new FakeGateway('a', () => {
+      throw closedError();
+    });
+    const results = await executePlan(
+      new Map([['a', gw]]),
+      [taskCourts('a', 18, [COURT_IDS[1] as number, COURT_IDS[2] as number])],
+      DATE,
+      DATE,
+      new Date(Date.now() + 1000),
+      10,
+    );
+    expect(results[0]).toMatchObject({ ok: false });
+    expect(results[0]?.reason).toContain('closed');
+    // Each court is attempted exactly once; no repeated rounds re-trigger the
+    // server's "booking too frequently" rate limit.
+    expect(gw.createCalls).toEqual([COURT_IDS[1] as number, COURT_IDS[2] as number]);
+  });
+
+  test('skips a closed court and books the next open one', async () => {
+    const gw = new FakeGateway('a', (_attempt, courtId) => {
+      if (courtId === (COURT_IDS[1] as number)) throw closedError();
+      return 3003;
+    });
+    const results = await executePlan(
+      new Map([['a', gw]]),
+      [taskCourts('a', 18, [COURT_IDS[1] as number, COURT_IDS[2] as number])],
+      DATE,
+      DATE,
+      new Date(Date.now() + 1000),
+      10,
+    );
+    expect(results[0]).toMatchObject({ ok: true, courtNumber: 2, bookingCode: 'CODE3003' });
+    expect(gw.createCalls).toEqual([COURT_IDS[1] as number, COURT_IDS[2] as number]);
+  });
+
+  test('backs off when the server reports booking too frequently', async () => {
+    const gw = new FakeGateway('a', () => {
+      throw rateLimitError();
+    });
+    const results = await executePlan(
+      new Map([['a', gw]]),
+      [task('a', 18)],
+      DATE,
+      DATE,
+      new Date(Date.now() + 200),
+      5,
+      { attemptMinDelayMs: 0, attemptMaxDelayMs: 0, accountStaggerMaxMs: 0, rateLimitBackoffMs: 60 },
+    );
+    expect(results[0]).toMatchObject({ ok: false });
+    // A 60ms backoff leaves room for only a handful of attempts in the 200ms
+    // window, whereas the 5ms retry delay alone would allow dozens.
+    expect(gw.createCalls.length).toBeGreaterThan(1);
+    expect(gw.createCalls.length).toBeLessThan(6);
   });
 });

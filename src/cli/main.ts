@@ -166,6 +166,7 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
       attemptMinDelayMs: config.race.attemptMinDelayMs,
       attemptMaxDelayMs: config.race.attemptMaxDelayMs,
       accountStaggerMaxMs: config.race.accountStaggerMaxMs,
+      rateLimitBackoffMs: config.race.rateLimitBackoffMs,
     },
   );
 

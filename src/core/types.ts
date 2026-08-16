@@ -42,6 +42,8 @@ export const configSchema = z.object({
       attemptMinDelayMs: z.number().int().min(0).default(500),
       attemptMaxDelayMs: z.number().int().min(0).default(1300),
       accountStaggerMaxMs: z.number().int().min(0).default(600),
+      // Cooldown after the server reports "booking too frequently".
+      rateLimitBackoffMs: z.number().int().min(1000).default(15000),
     })
     .refine((r) => r.attemptMinDelayMs <= r.attemptMaxDelayMs, {
       message: 'race.attemptMinDelayMs must be <= race.attemptMaxDelayMs',
