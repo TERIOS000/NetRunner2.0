@@ -27,8 +27,8 @@ TU API `bookyourcourtapi.psm.tu.ac.th` (49.229.83.38) **บล็อก IP ต�
 
 | Timer | เวลา | Compose job | หน้าที่ |
 |---|---|---|---|
-| `botbookyoucourt-race.timer` | Sun, Mon 06:55 ICT | `race` (`run`) | pre-auth แล้วรอถึง `fireAt` 06:59:58 → ยิง retry ทุก 500ms จนถึง `deadline` 07:02 |
-| `botbookyoucourt-fallback.timer` | Sun, Mon 07:10 ICT | `fallback` (`run --now`) | เก็บตกถ้า race แพ้ (demand ต่ำ คอร์ตมักว่างถึง ~08:24) |
+| `com.botbookyoucourt.race` | Sun,Mon,Tue 06:55 | `run` | pre-auth แล้วรอถึง `fireAt` 07:00:00 → gate ด้วย `listCourts` จนวันเป้าหมายเปิด → ยิงแบบ paced (2s/account, 1s/IP) จนถึง `deadline` 07:05 |
+| `com.botbookyoucourt.fallback` | Sun,Mon,Tue 07:10 | `run --now` | เก็บตกถ้า race แพ้ (demand ต่ำ คอร์ตมักว่างถึง ~08:24) |
 
 กลไกกันพลาด:
 - **Single-instance lock** — `run.sh` จับ `state/.run.lock` (`mkdir` atomic + เช็ค pid stale) ก่อนรัน. ถ้ามี instance อื่นถืออยู่ → `exit 0` เงียบ (ไม่ ping healthcheck fail). กันเคส 2 process ยิงชนกัน (agent ซ้ำ / fallback ทับ race ที่ยังค้าง) ที่จะทำให้บอทจองแข่งกันเองจน quota เต็ม แล้วรายงาน false-`❌`.
@@ -38,170 +38,11 @@ TU API `bookyourcourtapi.psm.tu.ac.th` (49.229.83.38) **บล็อก IP ต�
 - **Mutual exclusion** — `flock --nonblock /run/lock/botbookyoucourt.lock` ป้องกัน race กับ fallback รันซ้อนกัน.
 - **Persistent timers** — `Persistent=true` ทำให้ timer ไล่ยิงรอบที่พลาดหลัง reboot.
 
-เวลา race ตั้งใน `config.json` → `race.fireAt` / `race.deadline` / `race.retryDelayMs`. วัน/slot/ลำดับ court อยู่ใน `config.json` → `schedule`.
+เวลา race ตั้งใน `config.json` → `race.fireAt` / `race.deadline`. จังหวะยิงคุมด้วย `race.accountIntervalMs` (ช่องว่างขั้นต่ำต่อ account) / `race.ipIntervalMs` (ต่อ IP รวมทุก account) / `race.rateLimitBackoffMs` (โดน "จองถี่เกินไป" → หยุดพักเพิ่ม) / `race.gatePollIntervalMs` (ความถี่ poll เช็คว่าวันเป้าหมายเปิดหรือยัง). วันเป้าหมายมาจาก `advanceDaysCandidates` (default `[5,6]` — ตั้งแต่ 2026-08 window จริงไม่แน่ชัด บอทเลย race ทุก candidate ที่ตรง `schedule`). วัน/slot/ลำดับ court อยู่ใน `config.json` → `schedule`.
 
-### สิ่งที่ต้องมี
+> **Issue #5 (2026-08-16):** server เพิ่ม anti-bot rate limit ("จองถี่เกินไป / Booking too frequent") และวัน D+6 ไม่เปิดตอน 07:00 อีกต่อไป. บอทเดิมยิง ~13 req/s ใส่วันที่ยังไม่เปิด → โดนบล็อกยกกระบิ. แก้โดย: gate ด้วย `listCourts` ก่อนยิงจริง + pacing สุภาพ + backoff เมื่อโดน limit + race ทั้ง D+5 และ D+6.
 
-- Ubuntu ที่ใช้ `systemd`, ติดตั้ง Docker Engine และ Docker Compose v2 plugin (`docker compose`) แล้ว.
-- clone repo ไว้ที่ path ถาวร และ server ต้องมี public IP ไทยหรือ route ที่ TU API ยอมรับ.
-- สร้าง `.env` จาก `.env.example` และกรอกค่าครบ. ห้าม commit ไฟล์นี้ และควรให้เฉพาะเจ้าของไฟล์อ่านได้.
-
-setup script จะตรวจสิ่งเหล่านี้ แต่จะไม่ติดตั้งหรือเปลี่ยน Docker ที่มีอยู่ให้เอง.
-
-### ติดตั้ง
-
-```sh
-git clone https://github.com/TERIOS000/NetRunner2.0.git
-cd NetRunner2.0
-cp .env.example .env
-nano .env
-sh scripts/setup-ubuntu.sh
-```
-
-script จะ build image `botbookyoucourt:local`, สร้าง `logs/` และ `state/`, ติดตั้ง services/timers ทั้ง 2 ชุดไว้ใน `/etc/systemd/system`, enable timers และรัน `status` smoke test. smoke test จะ login และอ่านตารางว่างเท่านั้น ไม่จองจริง.
-
-ตั้งเพิ่มด้วยมือ:
-
-- **healthchecks.io check** → Schedule = **Cron** `55 6 * * 0,1`, Time Zone **Asia/Bangkok**, Grace 30 min–1h → เอา Ping URL ใส่ `HEALTHCHECK_URL` ใน `.env`
-
-### ตรวจสอบและทดสอบ
-
-```sh
-# ดู timer schedule
-sudo systemctl list-timers 'botbookyoucourt-*'
-
-# ดูสถานะ services/timers
-sudo systemctl status botbookyoucourt-race.timer botbookyoucourt-fallback.timer
-
-# log
-tail -f logs/$(date +%F).log
-sudo journalctl -u botbookyoucourt-race.service -u botbookyoucourt-fallback.service
-
-# safe — login + ดูตารางว่างเท่านั้น (ไม่จองจริง)
-docker compose run --rm status
-docker compose run --rm dry-run
-
-# live — จองจริง (เทียบเท่า test-schedule.sh --live บน Mac)
-sudo systemctl start botbookyoucourt-fallback.service
-```
-
-### Operations
-
-```sh
-# จองมือ (กรณี fallback ก็แล้วยังไม่ได้)
-docker compose run --rm book -- --date 2026-08-01 --hour 17 --court 5
-
-# อัปเดตโค้ด/config
-git pull
-sh scripts/setup-ubuntu.sh          # rebuild image, update units, reload systemd
-
-# ปิด schedule ชั่วคราว
-sudo systemctl disable --now botbookyoucourt-race.timer botbookyoucourt-fallback.timer
-
-# เปิด schedule ใหม่
-sudo systemctl enable --now botbookyoucourt-race.timer botbookyoucourt-fallback.timer
-
-# reset failed services (เช่น หลังจาก network ล่ม)
-sudo systemctl reset-failed botbookyoucourt-race.service botbookyoucourt-fallback.service
-```
-
-marker: ลบ `state/booked-<date>.json` ถ้าต้องการบังคับให้ยิงจองวันนั้นใหม่.
-
-### ข้อมูลถาวรและ backup
-
-`config.json` mount แบบ read-only ส่วน `logs/` และ `state/` เป็น bind mounts จาก host ดังนั้น rebuild หรือลบ container แล้วข้อมูลยังอยู่. backup idempotency markers ก่อนย้ายเครื่อง:
-
-```sh
-tar -czf botbookyoucourt-state-$(date +%F).tar.gz state/
-```
-
-restore `state/` เข้า checkout ใหม่ก่อน enable timers และห้ามเปิด timers บนเครื่องเก่ากับเครื่องใหม่พร้อมกัน. เก็บ `.env` แยกไว้ใน backup ที่ปลอดภัย เพราะไฟล์นี้ถูกตัดออกจาก Docker build context และ Git โดยตั้งใจ.
-
-## 2a. Portainer: Persistent Docker Compose (Alternative)
-
-ถ้าคุณใช้ Portainer หรือต้องการให้ container รันตลอดเวลา (visible ใน Portainer dashboard) แทน systemd timers — ใช้ `scheduler` service แทน.
-
-**ข้อแตกต่างจาก systemd:**
-
-| | systemd | Portainer scheduler |
-|---|---|---|
-| Container lifecycle | เริ่ม + จบใน ~2 นาที | รัน 24/7 (`restart: unless-stopped`) |
-| ตัวปลุก | systemd timer 06:55 | `scripts/scheduler.sh` sleep loop ตื่น 06:50 |
-| มองเห็นใน Portainer | ❌ | ✅ |
-| Fallback timer | มี (07:10) | ไม่มี (ยิงรอบเดียว) |
-| Post-reboot catch-up | `Persistent=true` | ยิงทันทีตอน container start |
-
-โค้ด booking (auth, planner, race loop, marker, Telegram, healthchecks) **เหมือนกันทั้งหมด** — เปลี่ยนแค่ตัวปลุก.
-
-### Setup
-
-```sh
-docker compose build scheduler
-docker compose up -d scheduler
-docker compose logs -f scheduler     # ดู startup fire + daily loop
-```
-
-container จะยิง `docker-run.sh run` ทันทีที่ start (post-reboot catch-up) แล้วเข้าสู่ daily loop: sleep จนถึง 06:50 ICT → fire → sleep ใหม่.
-
-### ตรวจสอบและทดสอบ
-
-```sh
-docker compose ps scheduler           # ดูสถานะ container
-docker compose logs scheduler --tail 10
-
-# safe — ไม่จอง
-docker compose run --rm dry-run
-docker compose run --rm status
-
-# live — จองทันที (--now, 60s deadline)
-docker compose run --rm fallback
-```
-
-### การแก้ไข config และโค้ดขณะรัน
-
-| แก้ไฟล์ | ต้อง rebuild/restart? | หมายเหตุ |
-|---|---|---|
-| `config.json` | ❌ ไม่ต้อง | bind mount `:ro` — container เห็นทันที, scheduler อ่านใหม่ทุกครั้งที่ fire |
-| `.env` | ⚠️ restart | `env_file` อ่านเฉพาะตอน container start |
-| `src/` (โค้ด) | ✅ rebuild + restart | โค้ดถูก COPY ใน Dockerfile, ไม่ได้ mount |
-| `scripts/` | ✅ rebuild + restart | เหมือนข้างบน |
-| `Dockerfile` / `compose.yaml` | ✅ rebuild + restart | — |
-
-```sh
-# .env เปลี่ยน → restart พอ
-docker compose up -d scheduler
-
-# โค้ด/scripts เปลี่ยน → rebuild + restart
-docker compose build scheduler
-docker compose up -d scheduler
-```
-
-### อัปเดตโค้ดจาก Git
-
-```sh
-git pull
-docker compose build scheduler
-docker compose up -d scheduler        # recreate container ด้วย image ใหม่
-```
-
-marker: ลบ `state/booked-<date>.json` ถ้าต้องการบังคับให้ยิงจองวันนั้นใหม่.
-
-## 3. Mac mini / launchd (Legacy)
-
-> ⚠️ **Legacy deployment** — Ubuntu/Docker (§2) คือ primary. Mac mini ยังใช้ได้แต่ maintenance overhead สูงกว่า (ต้อง auto-login, pmset no-sleep, GUI session). section นี้คงไว้สำหรับ migrate off หรือ reference.
-
-### สถาปัตยกรรม runtime (legacy)
-
-รันเป็น 2 launchd agents:
-
-| agent | เวลา | คำสั่ง | หน้าที่ |
-|---|---|---|---|
-| `com.botbookyoucourt.race` | Sun,Mon 06:55 | `run` | pre-auth แล้วรอถึง `fireAt` 06:59:58 → ยิง retry ทุก 500ms จนถึง `deadline` 07:02 |
-| `com.botbookyoucourt.fallback` | Sun,Mon 07:10 | `run --now` | เก็บตกถ้า race แพ้ |
-
-กลไกกันพลาด (เหมือน Ubuntu §2): Idempotent marker, Telegram, healthchecks.io (`scripts/run.sh`).
-
-### Setup
+## 3. Setup บน Mac mini
 
 > ⚠️ รันบนเครื่องส่วนตัวเท่านั้น — เครื่องทำงานที่มี corporate MITM proxy (Netskope/Zscaler) จะทำให้ทุก HTTPS request ล้ม (`self signed certificate in certificate chain`) รวมถึง Telegram alert → fail เงียบ. และ laptop ที่หลับได้จะยิง launchd สายจนเลย deadline.
 
@@ -282,7 +123,9 @@ sudo systemctl reset-failed 'botbookyoucourt-*'   # clear failed state
 | `❌ ... token` ทุก account | creds ใน `.env` ผิด/หมดอายุ | อัปเดต `.env`, ทดสอบ `bun src/index.ts status` |
 | `self signed certificate in certificate chain` ทุก request (TU + Telegram พร้อมกัน) | เครื่องมี corporate MITM proxy (เช่น Netskope/Zscaler) — bun ไม่ trust CA ของ proxy | อย่ารัน bot บนเครื่องทำงาน; ถ้าจำเป็นชั่วคราว: export CA ของ proxy เป็น .pem แล้วตั้ง `NODE_EXTRA_CA_CERTS=/path/to/ca.pem` ใน plist/run.sh |
 | `CreateOrEdit: Internal server error` ทั้งที่ auth ผ่าน | user TU ของ account นั้นหมดอายุ (ไม่มีสิทธิ์จอง) | ต่ออายุ user กับ TU; ระหว่างรอ เอา account ออกจาก `config.json` กัน bot ยิง 500 ฟรี |
-| log `no attempt made` | run เริ่มหลัง `deadline` 07:02 (เครื่องหลับแล้ว launchd ยิงตอนตื่น) | เช็ค pmset (แถวล่าง) + ต้องมี fallback agent 07:10 (`launchctl list \| grep botbook` ต้องเห็น 2 ตัว) |
+| log `no attempt made` | run เริ่มหลัง `deadline` 07:05 (เครื่องหลับแล้ว launchd ยิงตอนตื่น) | เช็ค pmset (แถวล่าง) + ต้องมี fallback agent 07:10 (`launchctl list \| grep botbook` ต้องเห็น 2 ตัว) |
+| `❌ ... จองถี่เกินไป / Booking too frequent` ซ้ำๆ | โดน anti-bot rate limit — pacing ยังถี่เกิน limit ปัจจุบันของ server | เพิ่ม `race.accountIntervalMs`/`ipIntervalMs` ใน `config.json`; log จะมี `[code=... http=...]` ท้าย error ไว้ investigate |
+| `❌ ... booking window ... never opened before deadline` | วันเป้าหมายไม่เปิดในช่วง race — window ของ server เปลี่ยนอีก | เช็คด้วย `bun run status --date <date>` ว่าวันไหนคืนตาราง court แล้วปรับ `advanceDaysCandidates`/launchd days |
 | จองไม่ได้แต่ไม่มี error ชัด | slot ถูกคนอื่นแย่ง (race แพ้) | fallback 07:10 เก็บตก; ถ้ายัง = จองมือ |
 | log ซ้ำทุกบรรทัด 2 รอบ / จองสำเร็จแล้วยังได้ `❌ FAILED` | มี launchd agent ซ้ำยิงเวลาเดียวกัน → 2 instance ชนกันเอง จน quota เต็ม (issue #4) | `launchctl print gui/$(id -u) \| grep book` ต้องเหลือแค่ `race`+`fallback`; ลบ agent เกิน (`launchctl bootout gui/$(id -u)/<label>` + `rm ~/Library/LaunchAgents/<label>.plist`). `run.sh` มี lock กันชั้นสองแล้ว |
 | เครื่องหลับตอน 06:55 | pmset ไม่ได้ตั้ง / เครื่องรีบูตแล้วไม่ auto-login | `pmset -g \| grep sleep` ต้อง 0; เปิด auto-login |
@@ -341,8 +184,8 @@ Remove-Item state/booked-<YYYY-MM-DD>.json
 
 ## 6. อ้างอิง
 
-- **Schedule:** run **Sun** (จองคอร์ตเสาร์) + **Mon** (จองคอร์ตอาทิตย์). booking window = target `today+6` (slot เปิด 07:00 ICT ล่วงหน้า 6 วัน).
-- **Race timing** (`config.json`): pre-auth ตอน systemd timer/launchd ตื่น 06:55 → `fireAt` 06:59:58 → retry ทุก 500ms → `deadline` 07:02.
+- **Schedule:** run **Sun,Mon,Tue** — แต่ละ run race ทุก candidate `today+5` / `today+6` ที่ weekday ตรง `schedule` (window จริงไม่แน่ชัดตั้งแต่ 2026-08, gate เป็นตัวตัดสินว่าวันไหนเปิด).
+- **Race timing** (`config.json`): pre-auth ตอน agent ตื่น 06:55 → `fireAt` 07:00:00 → gate ด้วย `listCourts` → ยิง paced 2s/account จนถึง `deadline` 07:05.
 - **Play slot:** Sat+Sun 17:00–19:00, court priority `[5, 4, any]` (2 ชม. = 2 accounts เพราะ 1 จอง/user/วัน).
 - **Court map:** 01→39, 02→40, 03→41, 04→51, 05→52 · `sportTypeId=3` · `sportStationId=4`.
 - **Grid values:** `1`=ว่าง, `-1`=ถูกจอง, `null`/`.`=ปิด.

@@ -24,7 +24,7 @@ cp .env.example .env   # กรอก credentials + telegram token + HEALTHCHECK
 bun run dry-run              # login + แสดง plan + ตาราง slot ว่าง (ไม่จองจริง)
 bun run status               # ตาราง slot วันนี้
 bun run status -- --date 2026-07-26
-bun run run:now              # จองทันที ไม่รอ 07:00 (deadline 60s)
+bun run run:now              # จองทันที ไม่รอ 07:00 (deadline 120s)
 bun run run:scheduled        # โหมดจริง: รอถึง fireAt แล้วยิงจนถึง deadline
 bun src/index.ts book --date 2026-07-22 --hour 10 --court 3   # จอง manual 1 slot
 bun run cancel -- --account aof --code A0KK429
@@ -110,11 +110,14 @@ sequenceDiagram
   C->>S: load(targetDate) → marks
   C->>C: pendingTasks = ตัด task ที่จองแล้ว
   C->>G: authenticate() เฉพาะ account ที่ค้าง
-  C->>C: รอถึง fireAt (06:59:58)
-  C->>E: executePlan(pending, deadline)
-  loop จนจองได้ / ถึง deadline
+  C->>C: รอถึง fireAt (07:00:00)
+  C->>E: executeRace(plans, deadline)
+  loop ต่อ target date
+    E->>G: listCourts(date) จนวันเปิด (gate)
+  end
+  loop จนจองได้ / ถึง deadline (paced 2s/account)
     E->>G: createBooking(court)
-    G-->>E: bookingId / error
+    G-->>E: bookingId / error (rate-limited → backoff)
   end
   E-->>C: TaskResult[]
   C->>S: save(marks + ที่จองสำเร็จ)

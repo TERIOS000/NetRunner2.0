@@ -1,11 +1,13 @@
 import { log } from '../adapters/logger.js';
-import { AbpError } from '../core/errors.js';
+import { AbpError, isCourtClosedError, isRateLimitError } from '../core/errors.js';
 import { formatIso, type IctDate } from '../core/ict.js';
+import { RequestPacer } from '../core/pacer.js';
 import type { BookingTask } from '../core/planner.js';
 import type { BookingGateway } from '../core/ports.js';
 import { courtNumberOf } from '../core/types.js';
 
 export interface TaskResult {
+  readonly targetDate: IctDate;
   readonly account: string;
   readonly hour: number;
   readonly ok: boolean;
@@ -14,40 +16,17 @@ export interface TaskResult {
   readonly reason?: string;
 }
 
-export interface RaceTiming {
-  /** Random delay between consecutive booking attempts (human-like pacing). */
-  readonly attemptMinDelayMs: number;
-  readonly attemptMaxDelayMs: number;
-  /** Random start offset per account so accounts don't fire in lockstep. */
-  readonly accountStaggerMaxMs: number;
-  /** Cooldown after the server reports "booking too frequently" (rate limit). */
+export interface DatePlan {
+  readonly targetDate: IctDate;
+  readonly tasks: readonly BookingTask[];
+}
+
+export interface RaceOptions {
+  readonly deadline: Date;
+  readonly accountIntervalMs: number;
+  readonly ipIntervalMs: number;
   readonly rateLimitBackoffMs: number;
-}
-
-const NO_TIMING: RaceTiming = {
-  attemptMinDelayMs: 0,
-  attemptMaxDelayMs: 0,
-  accountStaggerMaxMs: 0,
-  rateLimitBackoffMs: 0,
-};
-
-function randomBetween(min: number, max: number): number {
-  if (max <= min) return min;
-  return min + Math.floor(Math.random() * (max - min + 1));
-}
-
-type FailureKind = 'closed' | 'rateLimited' | 'retry';
-
-/**
- * Maps a failed CreateOrEdit to a strategy. Thai messages come from the server
- * and are stable for now; matching on the full error text (which includes the
- * ABP `message` and `details`) avoids hard-coding the ABP envelope shape.
- */
-function classifyFailure(error: unknown): FailureKind {
-  const message = error instanceof AbpError ? error.message : String(error);
-  if (message.includes('ปิดทำการ')) return 'closed';
-  if (message.includes('จองถี่เกินไป')) return 'rateLimited';
-  return 'retry';
+  readonly gatePollIntervalMs: number;
 }
 
 class SameCourtCoordinator {
@@ -65,147 +44,156 @@ class SameCourtCoordinator {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+class WindowGate {
+  private result: Promise<boolean> | null = null;
+
+  constructor(
+    private readonly client: BookingGateway,
+    private readonly targetDate: IctDate,
+    private readonly todayDate: IctDate,
+    private readonly pollIntervalMs: number,
+    private readonly deadline: Date,
+  ) {}
+
+  wait(): Promise<boolean> {
+    this.result ??= this.poll();
+    return this.result;
+  }
+
+  private async poll(): Promise<boolean> {
+    const label = `gate ${formatIso(this.targetDate)}`;
+    const todayFlag = formatIso(this.targetDate) === formatIso(this.todayDate) ? 1 : 2;
+    let attempts = 0;
+    while (Date.now() < this.deadline.getTime()) {
+      attempts += 1;
+      try {
+        const rows = await this.client.listCourts(this.targetDate, todayFlag);
+        if (rows.length > 0) {
+          log.info(`${label} OPEN after ${attempts} poll(s) — ${rows.length} courts listed`);
+          return true;
+        }
+        if (attempts === 1 || attempts % 15 === 0) {
+          log.info(`${label} not open yet (0 courts listed, poll #${attempts})`);
+        }
+      } catch (error) {
+        log.warn(`${label} listCourts failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      await sleep(this.pollIntervalMs);
+    }
+    log.error(`${label} never opened before deadline`);
+    return false;
+  }
+}
+
 async function runTask(
   client: BookingGateway,
   task: BookingTask,
   targetDate: IctDate,
   todayDate: IctDate,
-  deadline: Date,
-  retryDelayMs: number,
+  gate: WindowGate,
   coordinator: SameCourtCoordinator,
-  wonAccounts: Set<string>,
-  timing: RaceTiming,
+  pacer: RequestPacer,
+  options: RaceOptions,
 ): Promise<TaskResult> {
-  const label = `${task.credentials.name}@${task.hour}:00`;
+  const label = `${task.credentials.name}@${formatIso(targetDate)} ${task.hour}:00`;
+  const fail = (reason: string): TaskResult => {
+    const result: TaskResult = {
+      targetDate,
+      account: task.credentials.name,
+      hour: task.hour,
+      ok: false,
+      reason,
+    };
+    log.error(`${label} FAILED`, result);
+    return result;
+  };
+
+  if (!(await gate.wait())) {
+    return fail(`booking window for ${formatIso(targetDate)} never opened before deadline`);
+  }
+
+  let remainingCourts = [...task.courtPriority];
+  let cursor = 0;
   let lastError = 'no attempt made';
   let firstAttempt = true;
   const closedCourts = new Set<number>();
 
-  while (Date.now() < deadline.getTime()) {
-    if (wonAccounts.has(task.credentials.name)) {
-      const result: TaskResult = {
-        account: task.credentials.name,
-        hour: task.hour,
-        ok: false,
-        reason: 'account already won earlier',
-      };
-      log.info(`${label} skipped — account ${task.credentials.name} already booked`);
-      return result;
+  while (Date.now() < options.deadline.getTime()) {
+    if (remainingCourts.length === 0) {
+      return fail(`all courts closed for ${formatIso(targetDate)} — last error: ${lastError}`);
     }
+    await pacer.acquire(task.credentials.name);
+    if (Date.now() >= options.deadline.getTime()) break;
 
-    const priority = coordinator.reorder(task.courtPriority).filter((id) => !closedCourts.has(id));
-    if (priority.length === 0) {
-      const result: TaskResult = {
-        account: task.credentials.name,
-        hour: task.hour,
-        ok: false,
-        reason: `all courts closed for the target day (${closedCourts.size} court(s) closed)`,
-      };
-      log.warn(`${label} aborting — every court is closed for the target day`);
-      return result;
-    }
+    const ordered = coordinator.reorder(remainingCourts);
+    const courtId = ordered[cursor % ordered.length] as number;
+    cursor += 1;
 
-    let rateLimited = false;
-    for (const courtId of priority) {
-      if (Date.now() >= deadline.getTime()) break;
-      // Pace attempts like a human: the very first shot fires immediately at
-      // fireAt, every later attempt waits a random jitter so the burst doesn't
-      // trip the server's "booking too frequently" rate limit.
-      if (!firstAttempt) {
-        await sleep(randomBetween(timing.attemptMinDelayMs, timing.attemptMaxDelayMs));
-        if (Date.now() >= deadline.getTime()) break;
-      }
-      firstAttempt = false;
-      let bookingId: number;
-      try {
-        bookingId = await client.createBooking(targetDate, todayDate, task.hour, courtId);
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : String(error);
-        if (error instanceof AbpError && error.unAuthorizedRequest) {
-          log.warn(`${label} token rejected, re-authenticating`);
-          await client.authenticate(task.credentials.username, task.credentials.password);
-          continue;
-        }
-        const kind = classifyFailure(error);
-        if (kind === 'closed') {
-          // A closed court stays closed for the whole day — retrying it only
-          // burns rate-limit quota. Drop it permanently and move on.
-          closedCourts.add(courtId);
-          log.warn(`${label} court ${courtNumberOf(courtId)} closed for the day — will not retry`);
-          continue;
-        }
-        if (kind === 'rateLimited') {
-          // The server is telling us to slow down. Stop this round and back off
-          // before the next attempt.
-          log.warn(`${label} rate limited — backing off ${timing.rateLimitBackoffMs}ms`);
-          rateLimited = true;
-          break;
-        }
-        log.warn(`${label} court ${courtNumberOf(courtId)} failed: ${lastError}`);
-        continue;
-      }
-
-      // Booking succeeded — the slot is ours. Everything below is best-effort.
+    try {
+      const bookingId = await client.createBooking(targetDate, todayDate, task.hour, courtId);
       coordinator.reportWin(courtId);
-
-      let bookingCode: string | undefined;
-      try {
-        const view = await client.getBooking(bookingId);
-        bookingCode = view.booking.bookingCode;
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        log.warn(`${label} getBooking failed (booking id ${bookingId}): ${msg}`);
-      }
-
-      wonAccounts.add(task.credentials.name);
+      const view = await client.getBooking(bookingId);
       const result: TaskResult = {
+        targetDate,
         account: task.credentials.name,
         hour: task.hour,
         ok: true,
         courtNumber: courtNumberOf(courtId),
-        ...(bookingCode !== undefined ? { bookingCode } : {}),
+        bookingCode: view.booking.bookingCode,
       };
       log.info(`${label} BOOKED`, result);
       return result;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (error instanceof AbpError && error.unAuthorizedRequest) {
+        log.warn(`${label} token rejected, re-authenticating`);
+        await client.authenticate(task.credentials.username, task.credentials.password);
+      } else if (isRateLimitError(error)) {
+        pacer.penalize(task.credentials.name, options.rateLimitBackoffMs);
+        log.warn(`${label} rate-limited, backing off ${options.rateLimitBackoffMs}ms: ${lastError}`);
+      } else if (isCourtClosedError(error)) {
+        remainingCourts = remainingCourts.filter((id) => id !== courtId);
+        log.warn(
+          `${label} court ${courtNumberOf(courtId)} closed for this date, dropped from rotation: ${lastError}`,
+        );
+      } else {
+        log.warn(`${label} court ${courtNumberOf(courtId)} failed: ${lastError}`);
+      }
     }
-
-    const remaining = deadline.getTime() - Date.now();
-    const delay = rateLimited ? timing.rateLimitBackoffMs : retryDelayMs;
-    await sleep(Math.max(0, Math.min(delay, remaining)));
   }
 
-  const result: TaskResult = {
-    account: task.credentials.name,
-    hour: task.hour,
-    ok: false,
-    reason: lastError,
-  };
-  log.error(`${label} FAILED after deadline`, result);
-  return result;
+  return fail(lastError);
 }
 
-export async function executePlan(
+export async function executeRace(
   clients: ReadonlyMap<string, BookingGateway>,
-  tasks: readonly BookingTask[],
-  targetDate: IctDate,
+  plans: readonly DatePlan[],
   todayDate: IctDate,
-  deadline: Date,
-  retryDelayMs: number,
-  timing: RaceTiming = NO_TIMING,
+  options: RaceOptions,
 ): Promise<TaskResult[]> {
-  const coordinator = new SameCourtCoordinator();
-  const wonAccounts = new Set<string>();
-  log.info(`executing ${tasks.length} booking tasks for ${formatIso(targetDate)}`);
-  return Promise.all(
-    tasks.map((task, index) => {
+  const gateClient = clients.values().next().value;
+  if (!gateClient) throw new Error('no authenticated client available');
+  const pacer = new RequestPacer({
+    ipIntervalMs: options.ipIntervalMs,
+    accountIntervalMs: options.accountIntervalMs,
+  });
+
+  const runs: Promise<TaskResult>[] = [];
+  for (const plan of plans) {
+    const gate = new WindowGate(
+      gateClient,
+      plan.targetDate,
+      todayDate,
+      options.gatePollIntervalMs,
+      options.deadline,
+    );
+    const coordinator = new SameCourtCoordinator();
+    for (const task of plan.tasks) {
       const client = clients.get(task.credentials.name);
       if (!client) throw new Error(`no client for account "${task.credentials.name}"`);
-      // Stagger account starts: the first task fires immediately at fireAt, the
-      // others get a random offset so two accounts never hit the API in lockstep.
-      const stagger = index === 0 ? 0 : randomBetween(0, timing.accountStaggerMaxMs);
-      return sleep(stagger).then(() =>
-        runTask(client, task, targetDate, todayDate, deadline, retryDelayMs, coordinator, wonAccounts, timing),
-      );
-    }),
-  );
+      runs.push(runTask(client, task, plan.targetDate, todayDate, gate, coordinator, pacer, options));
+    }
+  }
+  log.info(`executing ${runs.length} booking task(s) across ${plans.length} date(s)`);
+  return Promise.all(runs);
 }
