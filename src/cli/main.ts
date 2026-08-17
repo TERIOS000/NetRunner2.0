@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFileBookingStore } from '../adapters/booking-store.js';
 import { BookYourCourtClient } from '../adapters/bookyourcourt.js';
@@ -114,7 +114,35 @@ function describePlan(plan: Plan): string {
   return lines.join('\n');
 }
 
+function acquireLock(): void {
+  const lockDir = join(process.cwd(), 'state', '.run.lock');
+  try {
+    mkdirSync(lockDir);
+  } catch {
+    try {
+      const holderPid = Number.parseInt(readFileSync(join(lockDir, 'pid'), 'utf8'), 10);
+      try {
+        process.kill(holderPid, 0);
+        log.info(`another instance is running (pid ${holderPid}) — exiting`);
+        process.exit(0);
+      } catch {
+        // Stale lock — holder is dead
+      }
+    } catch {
+      // Can't read pid
+    }
+    rmSync(lockDir, { recursive: true, force: true });
+    mkdirSync(lockDir);
+  }
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  const cleanupLock = () => rmSync(lockDir, { recursive: true, force: true });
+  process.on('exit', cleanupLock);
+  process.on('SIGINT', () => process.exit(0));
+  process.on('SIGTERM', () => process.exit(0));
+}
+
 async function commandRun(config: Config, args: CliArgs): Promise<void> {
+  acquireLock();
   const store = createFileBookingStore(join(process.cwd(), 'state'));
   const notifier = createTelegramNotifier(config.notify.telegram);
   const credentials = loadCredentials(config, log.warn);
