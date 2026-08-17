@@ -7,6 +7,10 @@ x-bot-service: &bot-service
   image: botbookyoucourt:local
   init: true
   restart: "no"
+  # Run as host user passakorn (uid/gid 1000) so log/state files written by
+  # the container are owned by passakorn, not root/nobody — prevents EACCES
+  # collisions with host-side `bun run ...` commands sharing the same dirs.
+  user: "1000:1000"
   env_file:
     - .env
   environment:

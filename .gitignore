@@ -6,3 +6,4 @@ state/
 *.har
 .DS_Store
 config.json
+.reasonix/

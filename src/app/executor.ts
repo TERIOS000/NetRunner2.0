@@ -115,7 +115,6 @@ async function runTask(
   let remainingCourts = [...task.courtPriority];
   let cursor = 0;
   let lastError = 'no attempt made';
-  const closedCourts = new Set<number>();
 
   while (Date.now() < options.deadline.getTime()) {
     if (remainingCourts.length === 0) {
