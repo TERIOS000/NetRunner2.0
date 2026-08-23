@@ -58,4 +58,33 @@ describe('RequestPacer', () => {
     await pacer.acquire('a');
     expect(clock.slept.reduce((sum, ms) => sum + ms, 0)).toBe(5000);
   });
+
+  test('jitter adds a random delay on top of the interval, never below it', async () => {
+    const clock = manualClock();
+    const pacer = new RequestPacer({
+      ipIntervalMs: 1000,
+      accountIntervalMs: 2000,
+      jitterMs: 400,
+      random: () => 0.999999,
+      ...clock,
+    });
+    await pacer.acquire('a');
+    await pacer.acquire('a');
+    // first fire: 0 + 400 jitter; second fire: +2000 min gap, then +400 jitter.
+    expect(clock.slept).toEqual([400, 2000, 400]);
+  });
+
+  test('jitter with random() = 0 leaves the interval unchanged', async () => {
+    const clock = manualClock();
+    const pacer = new RequestPacer({
+      ipIntervalMs: 1000,
+      accountIntervalMs: 2000,
+      jitterMs: 400,
+      random: () => 0,
+      ...clock,
+    });
+    await pacer.acquire('a');
+    await pacer.acquire('a');
+    expect(clock.slept).toEqual([2000]);
+  });
 });

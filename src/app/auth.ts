@@ -3,7 +3,7 @@ import type { BookingGateway } from '../core/ports.js';
 import { withRetry } from '../core/retry.js';
 import type { Credentials } from '../core/types.js';
 
-export type GatewayFactory = (name: string, requestTimeoutMs: number) => BookingGateway;
+export type GatewayFactory = (name: string, requestTimeoutMs: number, userAgent?: string) => BookingGateway;
 
 export interface AuthFailure {
   readonly name: string;
@@ -19,6 +19,7 @@ export interface AuthOptions {
   readonly requestTimeoutMs: number;
   readonly attempts: number;
   readonly baseDelayMs: number;
+  readonly userAgent?: string;
 }
 
 async function authenticateOne(
@@ -26,7 +27,7 @@ async function authenticateOne(
   factory: GatewayFactory,
   opts: AuthOptions,
 ): Promise<BookingGateway> {
-  const client = factory(creds.name, opts.requestTimeoutMs);
+  const client = factory(creds.name, opts.requestTimeoutMs, opts.userAgent);
   await withRetry(() => client.authenticate(creds.username, creds.password), {
     attempts: opts.attempts,
     baseDelayMs: opts.baseDelayMs,

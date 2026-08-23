@@ -40,6 +40,15 @@ export const configSchema = z.object({
     requestTimeoutMs: z.number().int().min(500).default(8000),
     authAttempts: z.number().int().min(1).default(3),
     authRetryDelayMs: z.number().int().min(50).default(300),
+    humanize: z
+      .object({
+        enabled: z.boolean().default(false),
+        jitterMs: z.number().int().min(0).default(400),
+        initialJitterMs: z.number().int().min(0).default(500),
+        warmupMs: z.number().int().min(0).default(30000),
+        userAgent: z.string().min(1).optional(),
+      })
+      .default({ enabled: false, jitterMs: 400, initialJitterMs: 500, warmupMs: 30000 }),
   }),
   notify: z.object({ telegram: z.boolean() }),
 });

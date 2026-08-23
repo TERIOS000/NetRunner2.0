@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createFileBookingStore } from '../adapters/booking-store.js';
-import { BookYourCourtClient } from '../adapters/bookyourcourt.js';
+import { BookYourCourtClient, pickDefaultUserAgent } from '../adapters/bookyourcourt.js';
 import { log } from '../adapters/logger.js';
 import { createTelegramNotifier } from '../adapters/telegram.js';
 import {
@@ -70,14 +70,17 @@ function requireValue(rest: string[], index: number, flag: string): string {
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-const gatewayFactory: GatewayFactory = (name, requestTimeoutMs) =>
-  new BookYourCourtClient(name, requestTimeoutMs);
+const gatewayFactory: GatewayFactory = (name, requestTimeoutMs, userAgent) =>
+  new BookYourCourtClient(name, requestTimeoutMs, userAgent ? { userAgent } : {});
 
 function authOptions(config: Config): AuthOptions {
+  const humanize = config.race.humanize;
+  const userAgent = humanize.enabled ? (humanize.userAgent ?? pickDefaultUserAgent()) : undefined;
   return {
     requestTimeoutMs: config.race.requestTimeoutMs,
     attempts: config.race.authAttempts,
     baseDelayMs: config.race.authRetryDelayMs,
+    ...(userAgent ? { userAgent } : {}),
   };
 }
 
@@ -199,8 +202,30 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
     const fireAt = ictInstantToday(today, config.race.fireAt);
     const waitMs = fireAt.getTime() - Date.now();
     if (waitMs > 0) {
-      log.info(`waiting ${(waitMs / 1000).toFixed(1)}s until fireAt ${config.race.fireAt} ICT`);
-      await sleep(waitMs);
+      const humanize = config.race.humanize;
+      if (humanize.enabled && humanize.warmupMs > 0 && waitMs > humanize.warmupMs) {
+        await sleep(waitMs - humanize.warmupMs);
+        log.info(
+          `warm-up: refreshing tokens ${(humanize.warmupMs / 1000).toFixed(1)}s before fireAt ${config.race.fireAt} ICT`,
+        );
+        await Promise.all(
+          [...clients.entries()].map(async ([name, client]) => {
+            const cred = pendingCreds.find((c) => c.name === name);
+            if (!cred) return;
+            try {
+              await client.authenticate(cred.username, cred.password);
+            } catch (error) {
+              log.warn(
+                `warm-up re-auth ${name} failed (kept old token): ${error instanceof Error ? error.message : String(error)}`,
+              );
+            }
+          }),
+        );
+        await sleep(humanize.warmupMs);
+      } else {
+        log.info(`waiting ${(waitMs / 1000).toFixed(1)}s until fireAt ${config.race.fireAt} ICT`);
+        await sleep(waitMs);
+      }
     }
   }
 
@@ -212,6 +237,8 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
     ipIntervalMs: config.race.ipIntervalMs,
     rateLimitBackoffMs: config.race.rateLimitBackoffMs,
     gatePollIntervalMs: config.race.gatePollIntervalMs,
+    jitterMs: config.race.humanize.enabled ? config.race.humanize.jitterMs : 0,
+    initialJitterMs: config.race.humanize.enabled ? config.race.humanize.initialJitterMs : 0,
   });
 
   for (const plan of bookablePlans) {

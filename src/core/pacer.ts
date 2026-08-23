@@ -1,6 +1,8 @@
 export interface PacerOptions {
   readonly ipIntervalMs: number;
   readonly accountIntervalMs: number;
+  readonly jitterMs?: number;
+  readonly random?: () => number;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
 }
@@ -13,10 +15,12 @@ export class RequestPacer {
   private readonly accountPenaltyUntil = new Map<string, number>();
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly random: () => number;
 
   constructor(private readonly options: PacerOptions) {
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? defaultSleep;
+    this.random = options.random ?? Math.random;
   }
 
   penalize(account: string, backoffMs: number): void {
@@ -38,11 +42,20 @@ export class RequestPacer {
       const current = this.now();
       const allowedAt = this.nextAllowedAt(account);
       if (allowedAt <= current) {
-        this.lastIpRequest = current;
-        this.lastAccountRequest.set(account, current);
+        const jitter = this.jitterDelay();
+        if (jitter > 0) await this.sleep(jitter);
+        const firedAt = this.now();
+        this.lastIpRequest = firedAt;
+        this.lastAccountRequest.set(account, firedAt);
         return;
       }
       await this.sleep(allowedAt - current);
     }
+  }
+
+  private jitterDelay(): number {
+    const max = this.options.jitterMs ?? 0;
+    if (max <= 0) return 0;
+    return Math.floor(this.random() * (max + 1));
   }
 }

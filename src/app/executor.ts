@@ -27,6 +27,8 @@ export interface RaceOptions {
   readonly ipIntervalMs: number;
   readonly rateLimitBackoffMs: number;
   readonly gatePollIntervalMs: number;
+  readonly jitterMs: number;
+  readonly initialJitterMs: number;
 }
 
 class SameCourtCoordinator {
@@ -52,6 +54,7 @@ class WindowGate {
     private readonly targetDate: IctDate,
     private readonly todayDate: IctDate,
     private readonly pollIntervalMs: number,
+    private readonly pollJitterMs: number,
     private readonly deadline: Date,
   ) {}
 
@@ -78,10 +81,15 @@ class WindowGate {
       } catch (error) {
         log.warn(`${label} listCourts failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-      await sleep(this.pollIntervalMs);
+      await sleep(this.pollIntervalMs + this.jitter(this.pollJitterMs));
     }
     log.error(`${label} never opened before deadline`);
     return false;
+  }
+
+  private jitter(max: number): number {
+    if (max <= 0) return 0;
+    return Math.floor(Math.random() * (max + 1));
   }
 }
 
@@ -112,10 +120,14 @@ async function runTask(
     return fail(`booking window for ${formatIso(targetDate)} never opened before deadline`);
   }
 
+  if (options.initialJitterMs > 0) {
+    const delay = Math.floor(Math.random() * (options.initialJitterMs + 1));
+    if (delay > 0) await sleep(delay);
+  }
+
   let remainingCourts = [...task.courtPriority];
   let cursor = 0;
   let lastError = 'no attempt made';
-  const closedCourts = new Set<number>();
 
   while (Date.now() < options.deadline.getTime()) {
     if (remainingCourts.length === 0) {
@@ -175,6 +187,7 @@ export async function executeRace(
   const pacer = new RequestPacer({
     ipIntervalMs: options.ipIntervalMs,
     accountIntervalMs: options.accountIntervalMs,
+    jitterMs: options.jitterMs,
   });
 
   const runs: Promise<TaskResult>[] = [];
@@ -184,6 +197,7 @@ export async function executeRace(
       plan.targetDate,
       todayDate,
       options.gatePollIntervalMs,
+      options.jitterMs,
       options.deadline,
     );
     const coordinator = new SameCourtCoordinator();

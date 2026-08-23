@@ -10,6 +10,17 @@ import type { BookingGateway } from '../core/ports.js';
 import { type BookingView, type CourtRow, SPORT_STATION_TENNIS, SPORT_TYPE_TENNIS } from '../core/types.js';
 
 const BASE_URL = 'https://bookyourcourtapi.psm.tu.ac.th';
+const FRONTEND_ORIGIN = 'https://bookyourcourt.psm.tu.ac.th';
+
+const DEFAULT_USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+] as const;
+
+export function pickDefaultUserAgent(): string {
+  return DEFAULT_USER_AGENTS[Math.floor(Math.random() * DEFAULT_USER_AGENTS.length)] as string;
+}
 
 interface AbpEnvelope<T> {
   result: T;
@@ -20,11 +31,23 @@ interface AbpEnvelope<T> {
 
 export class BookYourCourtClient implements BookingGateway {
   private accessToken: string | null = null;
+  private readonly browserHeaders: Record<string, string>;
 
   constructor(
     private readonly accountName: string,
     private readonly requestTimeoutMs = 8000,
-  ) {}
+    options: { userAgent?: string } = {},
+  ) {
+    this.browserHeaders = options.userAgent
+      ? {
+          'User-Agent': options.userAgent,
+          Accept: 'application/json, text/plain, */*',
+          'Accept-Language': 'th-TH,th;q=0.9,en-US;q=0.8,en;q=0.7',
+          Origin: FRONTEND_ORIGIN,
+          Referer: `${FRONTEND_ORIGIN}/`,
+        }
+      : {};
+  }
 
   get account(): string {
     return this.accountName;
@@ -99,6 +122,7 @@ export class BookYourCourtClient implements BookingGateway {
         method,
         headers: {
           'Content-Type': 'application/json',
+          ...this.browserHeaders,
           ...(options.skipAuth ? {} : { Authorization: `Bearer ${this.accessToken}` }),
         },
         signal: controller.signal,

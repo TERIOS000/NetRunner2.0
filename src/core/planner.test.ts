@@ -21,6 +21,7 @@ const config = (): Config => ({
     requestTimeoutMs: 8000,
     authAttempts: 3,
     authRetryDelayMs: 300,
+    humanize: { enabled: false, jitterMs: 0, initialJitterMs: 0, warmupMs: 0 },
   },
   notify: { telegram: false },
 });

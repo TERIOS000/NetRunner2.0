@@ -76,6 +76,8 @@ const options = (deadlineMs: number, overrides: Partial<RaceOptions> = {}): Race
   ipIntervalMs: 50,
   rateLimitBackoffMs: 50,
   gatePollIntervalMs: 5,
+  jitterMs: 0,
+  initialJitterMs: 0,
   ...overrides,
 });
 

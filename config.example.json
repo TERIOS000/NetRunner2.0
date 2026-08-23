@@ -23,7 +23,13 @@
     "gatePollIntervalMs": 2000,
     "requestTimeoutMs": 8000,
     "authAttempts": 3,
-    "authRetryDelayMs": 300
+    "authRetryDelayMs": 300,
+    "humanize": {
+      "enabled": false,
+      "jitterMs": 400,
+      "initialJitterMs": 500,
+      "warmupMs": 30000
+    }
   },
   "notify": { "telegram": true }
 }
