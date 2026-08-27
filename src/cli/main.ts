@@ -175,7 +175,7 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
 
   if (pendingPlans.length === 0) {
     log.info('all tasks already booked for every candidate date — skipping');
-    await notifier.notify(`${header}\n${alreadyBooked.join('\n')}`);
+    if (alreadyBooked.length > 0) log.info(`already booked:\n${alreadyBooked.join('\n')}`);
     return;
   }
 
@@ -268,9 +268,9 @@ async function commandRun(config: Config, args: CliArgs): Promise<void> {
         : `❌ ${formatIso(r.targetDate)} ${r.account} ${r.hour}:00 — ${r.reason}`,
     ),
     ...failed.map((f) => `⚠️ ${f.name} — auth failed after retries: ${f.reason}`),
-    ...alreadyBooked,
   ].join('\n');
   log.info(`results:\n${summary}`);
+  if (alreadyBooked.length > 0) log.info(`already booked:\n${alreadyBooked.join('\n')}`);
   await notifier.notify(`${header}\n${summary}`);
 
   if (results.some((r) => !r.ok) || failed.length > 0) process.exitCode = 1;
