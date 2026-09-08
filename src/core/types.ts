@@ -30,6 +30,7 @@ export const configSchema = z.object({
     .array(z.object({ days: z.array(weekdaySchema).min(1), slots: z.array(slotSchema).min(1) }))
     .min(1),
   advanceDaysCandidates: z.array(z.number().int().min(0).max(14)).min(1).default([5, 6]),
+  randomizeAccounts: z.boolean().default(false),
   race: z.object({
     fireAt: z.string().regex(/^\d{2}:\d{2}:\d{2}$/),
     deadline: z.string().regex(/^\d{2}:\d{2}:\d{2}$/),

@@ -19,6 +19,8 @@ cp config.example.json config.json   # ปรับวัน/เวลา/ลำ
 
 `config.json` — วัน/เวลา/ลำดับ court ที่ต้องการ, เวลายิง (`race.fireAt`) (ดูตัวอย่างจาก `config.example.json`)
 
+- `randomizeAccounts: true` → สุ่มจับคู่ account↔ชั่วโมง ตาม target date (สุ่มต่อวัน แต่คงที่ต่อวันนั้น เพื่อให้ fallback/rerun ไม่จองซ้ำ)
+
 ## คำสั่ง
 
 ```sh

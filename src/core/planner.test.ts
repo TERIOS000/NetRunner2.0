@@ -11,6 +11,7 @@ const config = (): Config => ({
   ],
   schedule: [{ days: ['mon'], slots: [{ time: '18:00-20:00', courts: [3, 'any'] }] }],
   advanceDaysCandidates: [5, 6],
+  randomizeAccounts: false,
   race: {
     fireAt: '07:00:00',
     deadline: '07:00:10',
@@ -60,5 +61,32 @@ describe('buildPlan', () => {
 
   test('throws when accounts are fewer than required bookings', () => {
     expect(() => buildPlan(config(), [creds('a')], monday, 7)).toThrow(/only 1 accounts/);
+  });
+
+  test('randomizes the account order per target date when enabled', () => {
+    const randomized: Config = { ...config(), randomizeAccounts: true };
+    const plan = buildPlan(randomized, [creds('a'), creds('b')], monday, 7);
+    expect(plan?.tasks).toHaveLength(2);
+    expect(plan?.tasks.map((t) => t.credentials.name).sort()).toEqual(['a', 'b']);
+    expect(plan?.tasks.map((t) => t.hour)).toEqual([18, 19]);
+  });
+
+  test('keeps the same assignment for the same target date across runs', () => {
+    const randomized: Config = { ...config(), randomizeAccounts: true };
+    const first = buildPlan(randomized, [creds('a'), creds('b')], monday, 7);
+    const second = buildPlan(randomized, [creds('a'), creds('b')], monday, 7);
+    expect(first?.tasks.map((t) => t.credentials.name)).toEqual(second?.tasks.map((t) => t.credentials.name));
+  });
+
+  test('randomizes a subset when there are more accounts than bookings', () => {
+    const randomized: Config = { ...config(), randomizeAccounts: true };
+    const oneHour: Config = {
+      ...randomized,
+      schedule: [{ days: ['mon'], slots: [{ time: '18:00-19:00', courts: [3] }] }],
+    };
+    const plan = buildPlan(oneHour, [creds('a'), creds('b'), creds('c')], monday, 7);
+    expect(plan?.tasks).toHaveLength(1);
+    const name = plan?.tasks[0]?.credentials.name;
+    expect(name !== undefined && ['a', 'b', 'c'].includes(name)).toBe(true);
   });
 });
